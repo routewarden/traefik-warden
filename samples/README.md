@@ -1,98 +1,68 @@
-# RouteWarden Local Testing Playground
+# RouteWarden Samples & Live Testing Environment (Traefik v3)
 
-This directory provides an instant, self-contained local testing environment for RouteWarden with Traefik using `localPlugins`.
+This directory provides a multi-port Docker Compose environment and an automated test suite (`test.sh`) to verify all RouteWarden response modes, security flags, path-evasion protections, and IP filtering capabilities in Traefik.
 
-## Why `localPlugins`?
-- **Zero integrity check errors**: Bypasses Traefik's public plugin catalog.
-- **Instant reload**: Mounts your live local Go code directly into Traefik.
-- **No network/rate-limits**: Works completely offline.
+## Architecture
+
+The test environment provisions:
+1. **Traefik Container**: Loads RouteWarden via `localPlugins` directly from source code and exposes 14 dedicated test ports mapped in `samples/dynamic.yml` and `samples/docker-compose.yml`.
+2. **Honeypot Backend Container**: A lightweight Python HTTP server on port `9999` to verify `mode proxy` (transparent honeypot redirection).
+3. **Echo Backend Container**: A lightweight Python HTTP server on port `8888` simulating protected upstream microservices.
 
 ---
 
-## Quick Start
+## Directory Layout
 
-### 1. Start Traefik & Sample Backend
+```
+samples/
+├── dynamic.yml          # Multi-port dynamic router & middleware configuration
+├── docker-compose.yml   # Multi-container orchestration (Traefik + Honeypot + Echo backend)
+├── test.sh              # Bash verification script testing each port and scenario
+└── README.md            # Documentation and instructions
+```
+
+---
+
+## Port Mappings & Features Tested
+
+| Port | Mode / Feature | Verification Scenario |
+| :--- | :--- | :--- |
+| **8080** | Core & JSON | Built-in `.env`, `.git`, SQL dumps, actuator endpoints; anti-evasion traversal (`%252e%252e`), matrix parameters (`/;param`); `check_query`; IP allowlist bypass via `allowed_ips`; `allow_patterns` overrides. |
+| **8081** | `html` | Returns custom HTML error page with `text/html` headers. |
+| **8082** | `text` | Returns plain text message with `text/plain` headers. |
+| **8083** | `xml` | Returns structured `<Error>` XML document. |
+| **8084** | `captcha` | Serves security challenge page with Cloudflare Turnstile markup. |
+| **8085** | `redirect` | Emits HTTP 302 redirect with `Location` header to honeypot sinkhole. |
+| **8086** | `rateLimitChallenge` | Emits HTTP 429 status code with `Retry-After: 180` header. |
+| **8087** | `fakeSuccess` | Returns synthetic decoy credentials (`.env`, git HEAD, actuator). |
+| **8088** | `gzipBomb` | Emits compressed gzip stream with `Content-Encoding: gzip`. |
+| **8089** | `silentDrop` | Abruptly terminates TCP socket connection upon probe. |
+| **8090** | `infiniteStream` | Streams continuous garbage data chunks to exhaust automated parsers. |
+| **8091** | `proxy` | Transparently reverse-proxies blocked probes to honeypot backend container. |
+| **8092** | `disable` | Flag verification: RouteWarden disabled, all requests pass through to upstream. |
+| **8093** | `methods` | Verb filter verification: Only inspects `POST` & `DELETE`; `GET` bypasses filter. |
+
+---
+
+## Running the Live Tests
+
+### 1. Start the Environment
+
+From the repository root or samples directory:
+
 ```bash
 cd samples
 docker compose up -d
 ```
 
-### 2. Follow Logs in Real Time
-```bash
-docker compose logs -f traefik
-```
-You will immediately see RouteWarden initialize:
-```text
-[DEBUG] routewarden [routewarden]: initialized (enabled=true, debug=true, securityLog=true, blockPatterns=12, allowPatterns=5, mode=fakeSuccess)
-```
+### 2. Execute the Test Suite
 
-Whenever an attacker probes a blocked route (such as `/.env` or `/wp-login.php`), RouteWarden emits a structured JSON security audit log to stdout, ready for CrowdSec or SIEM parsers:
-```json
-{"action":"fakeSuccess","client_ip":"192.168.1.50","method":"GET","path":"/.env","pattern":"(?i)(^|/)(\\.env.*|.*\\.(txt|log|bak|backup|sql|conf|config|ini|yaml|yml))$","plugin":"routewarden","reason":"path_blocked","request_uri":"/.env","timestamp":"2026-09-19T16:15:00Z","type":"routewarden_block","user_agent":"curl/7.88.1"}
-```
-
-### 3. Run Automated Tests
 ```bash
 ./test.sh
 ```
-This comprehensive test script validates:
-- **All 11 Defensive Modes** (`fakeSuccess`, `silentDrop`, `json`, `html`, `redirect`, `rateLimit`, `xml`, `captcha`, `gzipBomb`, `garbageStream`, `text`)
-- **Inspection Flags & Filtering** (`checkQuery`, HTTP `methods` filtering, `allowedIps` CIDR whitelisting, custom `blockPatterns`, and `enabled: false`)
-- **Security Audit Logs** (emission of structured JSON `routewarden_block` events for CrowdSec / SIEM)
 
+### 3. Teardown
 
-
----
-
-## Testing Different Response Modes
-
-You can test any response mode by editing `docker-compose.yml` under `traefik.http.middlewares.routewarden.plugin.routewarden`:
-
-### 1. Honeypot Decoy Mode (`fakeSuccess`)
-```yaml
-traefik.http.middlewares.routewarden.plugin.routewarden.mode: "fakeSuccess"
-```
-Test with:
 ```bash
-curl http://localhost/.env
-```
-Returns `200 OK` with realistic fake Laravel/MySQL credentials.
-
----
-
-### 2. Silent Drop Mode (`silentDrop`)
-```yaml
-traefik.http.middlewares.routewarden.plugin.routewarden.silentdrop: "true"
-```
-Test with:
-```bash
-curl -v http://localhost/.env
-```
-Abruptly closes the socket (`Empty reply from server` / stream reset).
-
----
-
-### 3. JSON Error Mode
-```yaml
-traefik.http.middlewares.routewarden.plugin.routewarden.mode: "json"
-traefik.http.middlewares.routewarden.plugin.routewarden.statuscode: "403"
-```
-Test with:
-```bash
-curl http://localhost/.env
-```
-Returns structured `{"error":"Forbidden","status":403,...}`.
-
----
-
-### 4. Gzip Bomb Mode
-```yaml
-traefik.http.middlewares.routewarden.plugin.routewarden.mode: "gzipBomb"
-```
-
----
-
-## Teardown
-```bash
-docker compose down
+docker compose down -v
 ```
