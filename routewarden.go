@@ -120,8 +120,8 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		responseHandler: respHandler,
 	}
 
-	rw.logDebug("initialized (enabled=%t, debug=%t, securityLog=%t, blockPatterns=%d, allowPatterns=%d, mode=%s)",
-		rw.enabled, rw.debug, rw.securityLog, len(rw.blockRegexes), len(rw.allowRegexes), rw.responseHandler.config.Mode)
+	rw.logDebug("initialized (enabled=%t, debug=%t, securityLog=%t, blockPatterns=%d, allowPatterns=%d, allowedIPs=%d, mode=%s)",
+		rw.enabled, rw.debug, rw.securityLog, len(rw.blockRegexes), len(rw.allowRegexes), len(config.AllowedIPs), rw.responseHandler.config.Mode)
 
 	return rw, nil
 }

@@ -3,23 +3,112 @@ services:
     image: traefik:v3.3
     container_name: routewarden-traefik-sample
     command:
-      - "--api.insecure=true"
-      - "--api.dashboard=true"
+      - "--api.dashboard=false"
       - "--log.level=DEBUG"
-      - "--entrypoints.web.address=:80"
-      # Load file provider (rock-solid, zero socket permissions needed)
+      # Multi-port entrypoints matching test suite (:8080 - :8093)
+      - "--entrypoints.ep8080.address=:8080"
+      - "--entrypoints.ep8080.forwardedHeaders.insecure=true"
+      - "--entrypoints.ep8081.address=:8081"
+      - "--entrypoints.ep8081.forwardedHeaders.insecure=true"
+      - "--entrypoints.ep8082.address=:8082"
+      - "--entrypoints.ep8082.forwardedHeaders.insecure=true"
+      - "--entrypoints.ep8083.address=:8083"
+      - "--entrypoints.ep8083.forwardedHeaders.insecure=true"
+      - "--entrypoints.ep8084.address=:8084"
+      - "--entrypoints.ep8084.forwardedHeaders.insecure=true"
+      - "--entrypoints.ep8085.address=:8085"
+      - "--entrypoints.ep8085.forwardedHeaders.insecure=true"
+      - "--entrypoints.ep8086.address=:8086"
+      - "--entrypoints.ep8086.forwardedHeaders.insecure=true"
+      - "--entrypoints.ep8087.address=:8087"
+      - "--entrypoints.ep8087.forwardedHeaders.insecure=true"
+      - "--entrypoints.ep8088.address=:8088"
+      - "--entrypoints.ep8088.forwardedHeaders.insecure=true"
+      - "--entrypoints.ep8089.address=:8089"
+      - "--entrypoints.ep8089.forwardedHeaders.insecure=true"
+      - "--entrypoints.ep8090.address=:8090"
+      - "--entrypoints.ep8090.forwardedHeaders.insecure=true"
+      - "--entrypoints.ep8091.address=:8091"
+      - "--entrypoints.ep8091.forwardedHeaders.insecure=true"
+      - "--entrypoints.ep8092.address=:8092"
+      - "--entrypoints.ep8092.forwardedHeaders.insecure=true"
+      - "--entrypoints.ep8093.address=:8093"
+      - "--entrypoints.ep8093.forwardedHeaders.insecure=true"
+      # Load file provider
       - "--providers.file.filename=/etc/traefik/dynamic.yml"
       - "--providers.file.watch=true"
       # Load RouteWarden directly from local repository
       - "--experimental.localplugins.routewarden.modulename=github.com/routewarden/traefik-warden"
     ports:
-      - "80:80"       # Web entrypoint
-      - "8080:8080"   # Traefik Dashboard (http://localhost:8080)
+      - "8080:8080"
+      - "8081:8081"
+      - "8082:8082"
+      - "8083:8083"
+      - "8084:8084"
+      - "8085:8085"
+      - "8086:8086"
+      - "8087:8087"
+      - "8088:8088"
+      - "8089:8089"
+      - "8090:8090"
+      - "8091:8091"
+      - "8092:8092"
+      - "8093:8093"
     volumes:
       - ./dynamic.yml:/etc/traefik/dynamic.yml:ro
-      # Mount parent repository root directly into Traefik's local plugin source tree
       - ..:/plugins-local/src/github.com/routewarden/traefik-warden:ro
+    depends_on:
+      - honeypot
 
-  whoami:
-    image: traefik/whoami:latest
-    container_name: routewarden-whoami-sample
+  # Lightweight mock honeypot backend for testing proxy mode
+  honeypot:
+    image: python:3.11-alpine
+    restart: unless-stopped
+    command:
+      - python
+      - -c
+      - |
+        import http.server, socketserver
+        class H(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("X-Honeypot-Captured", "true")
+                self.end_headers()
+                self.wfile.write(b"{\"honeypot\":\"captured\",\"status\":\"success\"}\n")
+            def do_POST(self):
+                self.do_GET()
+        socketserver.TCPServer.allow_reuse_address = True
+        with socketserver.TCPServer(("", 9999), H) as httpd:
+            httpd.serve_forever()
+    expose:
+      - "9999"
+
+  # Upstream echo service
+  echo-backend:
+    image: python:3.11-alpine
+    restart: unless-stopped
+    command:
+      - python
+      - -c
+      - |
+        import http.server, socketserver
+        class H(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("Content-Type", "text/plain")
+                self.end_headers()
+                port = self.headers.get("X-Forwarded-Port", "8080")
+                if port == "8092":
+                    self.wfile.write(b"OK: RouteWarden Disabled - Upstream Reached (8092)\n")
+                else:
+                    self.wfile.write(f"OK: Upstream Reached ({port})\n".encode())
+            def do_POST(self):
+                self.do_GET()
+            def do_DELETE(self):
+                self.do_GET()
+        socketserver.TCPServer.allow_reuse_address = True
+        with socketserver.TCPServer(("", 8888), H) as httpd:
+            httpd.serve_forever()
+    expose:
+      - "8888"
