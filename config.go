@@ -16,6 +16,14 @@ var DefaultBlockPatterns = []string{
 	`(?i)(^|/)(phpinfo\.php|info\.php|server-status|server-info|actuator(/.*)?|metrics|heapdump|trace|env)$`,
 	// Package manager files & lockfiles
 	`(?i)(^|/)(composer\.(json|lock)|package-lock\.json|yarn\.lock|pnpm-lock\.yaml|Pipfile|Pipfile\.lock|requirements\.txt)$`,
+	// TLS & cryptographic private keys, certificates, keystores
+	`(?i).*\.(pem|key|crt|pfx|p12|jks|kdb)$`,
+	// Container & orchestration manifests and configs
+	`(?i)(^|/)(dockerfile.*|docker-compose.*\.ya?ml)$`,
+	// System & macOS metadata files
+	`(?i)(^|/)\.ds_store$`,
+	// Web framework and CMS sensitive configuration files
+	`(?i)(^|/)(wp-config\.php.*|configuration\.php.*|settings\.py|local_settings\.py)$`,
 }
 
 // DefaultAllowPatterns contains typical legitimate endpoints that might otherwise match broad patterns.
@@ -68,6 +76,7 @@ type Config struct {
 	Action                     string          `json:"action,omitempty"`                     // Convenience alias for response mode (e.g. "silentDrop", "fakeSuccess", "json")
 	Mode                       string          `json:"mode,omitempty"`                       // Convenience alias for response mode
 	CheckQuery                 bool            `json:"checkQuery,omitempty"`
+	CheckHeaders               []string        `json:"checkHeaders,omitempty"`               // Optional headers to inspect (e.g. X-Forwarded-Uri, X-Rewrite-URL)
 	Debug                      bool            `json:"debug,omitempty"`                      // Enable verbose debug logging to stdout/stderr
 	SecurityLog                bool            `json:"securityLog,omitempty"`                // Emit structured JSON security audit events (CrowdSec/SIEM compatible) on block
 	Response                   *ResponseConfig `json:"response,omitempty"`
@@ -90,6 +99,7 @@ func CreateConfig() *Config {
 		Action:                     "",
 		Mode:                       "",
 		CheckQuery:                 false,
+		CheckHeaders:               []string{},
 		Debug:                      false,
 		SecurityLog:                true,
 		Response: &ResponseConfig{

@@ -5,7 +5,7 @@ services:
     command:
       - "--api.dashboard=false"
       - "--log.level=DEBUG"
-      # Multi-port entrypoints matching test suite (:8080 - :8093)
+      # Multi-port entrypoints matching test suite (:8080 - :8094)
       - "--entrypoints.ep8080.address=:8080"
       - "--entrypoints.ep8080.forwardedHeaders.insecure=true"
       - "--entrypoints.ep8081.address=:8081"
@@ -34,6 +34,8 @@ services:
       - "--entrypoints.ep8092.forwardedHeaders.insecure=true"
       - "--entrypoints.ep8093.address=:8093"
       - "--entrypoints.ep8093.forwardedHeaders.insecure=true"
+      - "--entrypoints.ep8094.address=:8094"
+      - "--entrypoints.ep8094.forwardedHeaders.insecure=true"
       # Load file provider
       - "--providers.file.filename=/etc/traefik/dynamic.yml"
       - "--providers.file.watch=true"
@@ -54,6 +56,7 @@ services:
       - "8091:8091"
       - "8092:8092"
       - "8093:8093"
+      - "8094:8094"
     volumes:
       - ./dynamic.yml:/etc/traefik/dynamic.yml:ro
       - ..:/plugins-local/src/github.com/routewarden/traefik-warden:ro

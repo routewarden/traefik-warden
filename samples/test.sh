@@ -111,6 +111,54 @@ test_core_and_builtin_patterns() {
     else
         log_fail "Built-in actuator (/actuator/env)" "403" "$status"
     fi
+
+    # Built-in cloud credentials (.aws, .kube)
+    status=$(curl -s -o /dev/null -w "%{http_code}" "http://${BASE_HOST}:8080/.aws/credentials")
+    if [ "$status" = "403" ]; then
+        log_pass "Built-in cloud credentials block (/.aws/credentials -> HTTP 403)"
+    else
+        log_fail "Built-in cloud credentials (/.aws/credentials)" "403" "$status"
+    fi
+
+    # Built-in package manager lockfile (package-lock.json)
+    status=$(curl -s -o /dev/null -w "%{http_code}" "http://${BASE_HOST}:8080/package-lock.json")
+    if [ "$status" = "403" ]; then
+        log_pass "Built-in lockfile block (/package-lock.json -> HTTP 403)"
+    else
+        log_fail "Built-in lockfile (/package-lock.json)" "403" "$status"
+    fi
+
+    # Built-in TLS private key (.key / .pem)
+    status=$(curl -s -o /dev/null -w "%{http_code}" "http://${BASE_HOST}:8080/server.key")
+    if [ "$status" = "403" ]; then
+        log_pass "Built-in TLS private key block (/server.key -> HTTP 403)"
+    else
+        log_fail "Built-in TLS private key (/server.key)" "403" "$status"
+    fi
+
+    # Built-in container manifest (Dockerfile / docker-compose.yml)
+    status=$(curl -s -o /dev/null -w "%{http_code}" "http://${BASE_HOST}:8080/docker-compose.yml")
+    if [ "$status" = "403" ]; then
+        log_pass "Built-in container manifest block (/docker-compose.yml -> HTTP 403)"
+    else
+        log_fail "Built-in container manifest (/docker-compose.yml)" "403" "$status"
+    fi
+
+    # Built-in OS metadata (.DS_Store)
+    status=$(curl -s -o /dev/null -w "%{http_code}" "http://${BASE_HOST}:8080/.DS_Store")
+    if [ "$status" = "403" ]; then
+        log_pass "Built-in OS metadata block (/.DS_Store -> HTTP 403)"
+    else
+        log_fail "Built-in OS metadata (/.DS_Store)" "403" "$status"
+    fi
+
+    # Built-in CMS sensitive configuration (wp-config.php)
+    status=$(curl -s -o /dev/null -w "%{http_code}" "http://${BASE_HOST}:8080/wp-config.php")
+    if [ "$status" = "403" ]; then
+        log_pass "Built-in CMS config block (/wp-config.php -> HTTP 403)"
+    else
+        log_fail "Built-in CMS config (/wp-config.php)" "403" "$status"
+    fi
 }
 
 # ------------------------------------------------------------------------------
@@ -364,10 +412,61 @@ test_operational_flags() {
 }
 
 # ------------------------------------------------------------------------------
-# 6. Security Logging (CrowdSec / SIEM format)
+# 6. Header Inspection (checkHeaders, Port 8094)
+# ------------------------------------------------------------------------------
+test_header_inspection() {
+    section "6. Forwarded Header Inspection (:8094)"
+
+    # Clean benign request with no suspicious headers passes
+    local status body
+    status=$(curl -s -o /dev/null -w "%{http_code}" "http://${BASE_HOST}:8094/public/api" || echo "000")
+    body=$(curl -s "http://${BASE_HOST}:8094/public/api" || echo "")
+    if [ "$status" = "200" ] && [[ "$body" == *"OK: Upstream Reached"* ]]; then
+        log_pass "Clean request on header-checked port passes upstream (HTTP 200)"
+    else
+        log_fail "Clean request (:8094)" "200 with upstream text" "$status - $body"
+    fi
+
+    # Sensitive path in X-Forwarded-Uri should be detected and blocked
+    status=$(curl -s -o /dev/null -w "%{http_code}" -H "X-Forwarded-Uri: /.env" "http://${BASE_HOST}:8094/public/api" || echo "000")
+    body=$(curl -s -H "X-Forwarded-Uri: /.env" "http://${BASE_HOST}:8094/public/api" || echo "")
+    if [ "$status" = "403" ] && [[ "$body" == *"Sensitive path detected in forwarded header"* ]]; then
+        log_pass "Blocked sensitive path in X-Forwarded-Uri (/.env -> HTTP 403)"
+    else
+        log_fail "X-Forwarded-Uri: /.env" "403 with Sensitive path detected" "$status - $body"
+    fi
+
+    # Sensitive path in X-Rewrite-URL should be detected and blocked
+    status=$(curl -s -o /dev/null -w "%{http_code}" -H "X-Rewrite-URL: /.git/config" "http://${BASE_HOST}:8094/public/api" || echo "000")
+    body=$(curl -s -H "X-Rewrite-URL: /.git/config" "http://${BASE_HOST}:8094/public/api" || echo "")
+    if [ "$status" = "403" ] && [[ "$body" == *"Sensitive path detected in forwarded header"* ]]; then
+        log_pass "Blocked sensitive path in X-Rewrite-URL (/.git/config -> HTTP 403)"
+    else
+        log_fail "X-Rewrite-URL: /.git/config" "403 with Sensitive path detected" "$status - $body"
+    fi
+
+    # Encoded evasion in X-Forwarded-Uri (%252e%252e/.env)
+    status=$(curl -s -o /dev/null -w "%{http_code}" -H "X-Forwarded-Uri: /%252e%252e/.env" "http://${BASE_HOST}:8094/public/api" || echo "000")
+    if [ "$status" = "403" ]; then
+        log_pass "Anti-evasion in X-Forwarded-Uri (/%252e%252e/.env -> HTTP 403)"
+    else
+        log_fail "Anti-evasion in X-Forwarded-Uri" "403" "$status"
+    fi
+
+    # Unchecked header with sensitive path should NOT be blocked by checkHeaders
+    status=$(curl -s -o /dev/null -w "%{http_code}" -H "X-Custom-Unchecked: /.env" "http://${BASE_HOST}:8094/public/api" || echo "000")
+    if [ "$status" = "200" ]; then
+        log_pass "Unchecked header (X-Custom-Unchecked: /.env) ignored (HTTP 200)"
+    else
+        log_fail "Unchecked header" "200" "$status"
+    fi
+}
+
+# ------------------------------------------------------------------------------
+# 7. Security Logging (CrowdSec / SIEM format)
 # ------------------------------------------------------------------------------
 test_security_logging() {
-    section "6. Security Logging & CrowdSec Format (:8080)"
+    section "7. Security Logging & CrowdSec Format (:8080)"
 
     local test_ua="CrowdSecVerificationSuite/1.0"
     local test_client_ip="203.0.113.195"
@@ -399,6 +498,13 @@ test_security_logging() {
         else
             log_fail "CrowdSec raw JSON log" "JSON log with type routewarden_block and client_ip ${test_client_ip}" "$logs"
         fi
+
+        # Check for structured log / debug event
+        if echo "$logs" | grep -qi "routewarden" && echo "$logs" | grep -qi "path_blocked"; then
+            log_pass "Structured security event logged with reason 'path_blocked'"
+        else
+            log_fail "Structured security event" "routewarden log with reason path_blocked" "$logs"
+        fi
     else
         log_info "Docker environment not detected or not running; tested request dispatch for security_log."
         log_pass "Security logging endpoint dispatched successfully"
@@ -420,6 +526,7 @@ main() {
     test_overrides_and_ip_flags
     test_response_modes
     test_operational_flags
+    test_header_inspection
     test_security_logging
 
     echo ""
