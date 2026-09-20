@@ -98,6 +98,13 @@ http:
       middlewares: [warden-8093]
       service: echo-service
 
+    # 15. Port 8094: Header inspection (checkHeaders — catches path-evasion via X-Forwarded-Uri / X-Rewrite-URL)
+    router-8094:
+      rule: "PathPrefix(`/`)"
+      entryPoints: [ep8094]
+      middlewares: [warden-8094]
+      service: echo-service
+
   services:
     echo-service:
       loadBalancer:
@@ -259,3 +266,16 @@ http:
           response:
             mode: json
             statusCode: 403
+
+    # 15. Port 8094: Header inspection (checkHeaders — blocks path-evasion in forwarded headers)
+    warden-8094:
+      plugin:
+        routewarden:
+          enabled: true
+          checkHeaders:
+            - X-Forwarded-Uri
+            - X-Rewrite-URL
+          response:
+            mode: json
+            statusCode: 403
+            body: "{\"error\":\"Blocked\",\"reason\":\"Sensitive path detected in forwarded header\"}"

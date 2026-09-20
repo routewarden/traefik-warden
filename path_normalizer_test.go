@@ -102,3 +102,40 @@ func TestPathNormalizer_ExtractCandidatePaths(t *testing.T) {
 		})
 	}
 }
+
+// FuzzExtractCandidatePaths runs continuous fuzzing with randomized inputs to ensure
+// path normalizer never panics or triggers index out of range on malformed or extreme inputs.
+func FuzzExtractCandidatePaths(f *testing.F) {
+	seeds := []string{
+		"/",
+		"/.env",
+		"/%2e%2e/.env",
+		"/static/%252e%252e/.env",
+		"/;.env",
+		"/app;jsessionid=123/.env",
+		"/static\\..\\.env",
+		"/.env\x00.png",
+		"/search?file=.env",
+		"/api/v1/users",
+		"/phpinfo.php",
+		"//server-status",
+		"/..;/..;/.env",
+		"/%20/.env",
+		"/test/../../../etc/passwd",
+	}
+
+	for _, s := range seeds {
+		f.Add(s, s, s)
+	}
+
+	f.Fuzz(func(t *testing.T, rawPath, pathStr, reqURI string) {
+		// Execution must complete safely without panicking
+		candidates := traefik_warden.ExtractCandidatePaths(rawPath, pathStr, reqURI)
+		for _, c := range candidates {
+			if len(c) > 0 && c[0] != '/' {
+				t.Fatalf("expected candidate path to begin with '/', got %q", c)
+			}
+		}
+	})
+}
+
