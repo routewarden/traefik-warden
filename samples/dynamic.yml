@@ -1,292 +1,261 @@
 http:
   routers:
-    # 1. Default Honeypot Decoy Router
-    router-fakesuccess:
-      rule: "PathPrefix(`/mode/fakesuccess`) || PathPrefix(`/`)"
-      priority: 10
-      entryPoints: [web]
-      middlewares: [warden-fakesuccess]
-      service: whoami-service
+    # 1. Port 8080: Core & JSON mode
+    router-8080:
+      rule: "PathPrefix(`/`)"
+      entryPoints: [ep8080]
+      middlewares: [warden-8080]
+      service: echo-service
 
-    # 2. JSON Response Mode
-    router-json:
-      rule: "PathPrefix(`/mode/json`)"
-      priority: 100
-      entryPoints: [web]
-      middlewares: [warden-json]
-      service: whoami-service
+    # 2. Port 8081: HTML mode
+    router-8081:
+      rule: "PathPrefix(`/`)"
+      entryPoints: [ep8081]
+      middlewares: [warden-8081]
+      service: echo-service
 
-    # 3. HTML Response Mode
-    router-html:
-      rule: "PathPrefix(`/mode/html`)"
-      priority: 100
-      entryPoints: [web]
-      middlewares: [warden-html]
-      service: whoami-service
+    # 3. Port 8082: Plain Text mode
+    router-8082:
+      rule: "PathPrefix(`/`)"
+      entryPoints: [ep8082]
+      middlewares: [warden-8082]
+      service: echo-service
 
-    # 4. Silent Drop Mode (Abrupt TCP close / RST_STREAM)
-    router-silentdrop:
-      rule: "PathPrefix(`/mode/silentdrop`)"
-      priority: 100
-      entryPoints: [web]
-      middlewares: [warden-silentdrop]
-      service: whoami-service
+    # 4. Port 8083: XML mode
+    router-8083:
+      rule: "PathPrefix(`/`)"
+      entryPoints: [ep8083]
+      middlewares: [warden-8083]
+      service: echo-service
 
-    # 5. Rate Limit Challenge Mode (HTTP 429 + Retry-After)
-    router-ratelimit:
-      rule: "PathPrefix(`/mode/ratelimit`)"
-      priority: 100
-      entryPoints: [web]
-      middlewares: [warden-ratelimit]
-      service: whoami-service
+    # 5. Port 8084: Captcha mode (Turnstile challenge)
+    router-8084:
+      rule: "PathPrefix(`/`)"
+      entryPoints: [ep8084]
+      middlewares: [warden-8084]
+      service: echo-service
 
-    # 6. Redirect Mode (HTTP 302 to safe URL)
-    router-redirect:
-      rule: "PathPrefix(`/mode/redirect`)"
-      priority: 100
-      entryPoints: [web]
-      middlewares: [warden-redirect]
-      service: whoami-service
+    # 6. Port 8085: Redirect mode
+    router-8085:
+      rule: "PathPrefix(`/`)"
+      entryPoints: [ep8085]
+      middlewares: [warden-8085]
+      service: echo-service
 
-    # 7. XML Mode
-    router-xml:
-      rule: "PathPrefix(`/mode/xml`)"
-      priority: 100
-      entryPoints: [web]
-      middlewares: [warden-xml]
-      service: whoami-service
+    # 7. Port 8086: RateLimitChallenge mode
+    router-8086:
+      rule: "PathPrefix(`/`)"
+      entryPoints: [ep8086]
+      middlewares: [warden-8086]
+      service: echo-service
 
-    # 8. Interactive Captcha Mode
-    router-captcha:
-      rule: "PathPrefix(`/mode/captcha`)"
-      priority: 100
-      entryPoints: [web]
-      middlewares: [warden-captcha]
-      service: whoami-service
+    # 8. Port 8087: FakeSuccess / Decoy mode
+    router-8087:
+      rule: "PathPrefix(`/`)"
+      entryPoints: [ep8087]
+      middlewares: [warden-8087]
+      service: echo-service
 
-    # 9. Gzip Bomb Defense Mode
-    router-gzipbomb:
-      rule: "PathPrefix(`/mode/gzipbomb`)"
-      priority: 100
-      entryPoints: [web]
-      middlewares: [warden-gzipbomb]
-      service: whoami-service
+    # 9. Port 8088: GzipBomb mode
+    router-8088:
+      rule: "PathPrefix(`/`)"
+      entryPoints: [ep8088]
+      middlewares: [warden-8088]
+      service: echo-service
 
-    # 10. Garbage Stream Defense Mode
-    router-garbagestream:
-      rule: "PathPrefix(`/mode/garbagestream`)"
-      priority: 100
-      entryPoints: [web]
-      middlewares: [warden-garbagestream]
-      service: whoami-service
+    # 10. Port 8089: SilentDrop mode
+    router-8089:
+      rule: "PathPrefix(`/`)"
+      entryPoints: [ep8089]
+      middlewares: [warden-8089]
+      service: echo-service
 
-    # 11. Plain Text Mode (Default 403)
-    router-text:
-      rule: "PathPrefix(`/mode/text`)"
-      priority: 100
-      entryPoints: [web]
-      middlewares: [warden-text]
-      service: whoami-service
+    # 11. Port 8090: InfiniteStream mode
+    router-8090:
+      rule: "PathPrefix(`/`)"
+      entryPoints: [ep8090]
+      middlewares: [warden-8090]
+      service: echo-service
 
-    # --- Flag & Feature Testing Routers ---
-    # A. checkQuery Flag
-    router-flag-checkquery:
-      rule: "PathPrefix(`/flag/checkquery`)"
-      priority: 100
-      entryPoints: [web]
-      middlewares: [warden-flag-checkquery]
-      service: whoami-service
+    # 12. Port 8091: Proxy mode (forwarded to honeypot)
+    router-8091:
+      rule: "PathPrefix(`/`)"
+      entryPoints: [ep8091]
+      middlewares: [warden-8091]
+      service: echo-service
 
-    # B. methods Filtering Flag (only inspect POST)
-    router-flag-methods:
-      rule: "PathPrefix(`/flag/methods`)"
-      priority: 100
-      entryPoints: [web]
-      middlewares: [warden-flag-methods]
-      service: whoami-service
+    # 13. Port 8092: Disabled flag test
+    router-8092:
+      rule: "PathPrefix(`/`)"
+      entryPoints: [ep8092]
+      middlewares: [warden-8092]
+      service: echo-service
 
-    # C. allowedIps Flag (127.0.0.1 / ::1 whitelisted)
-    router-flag-allowedips:
-      rule: "PathPrefix(`/flag/allowedips`)"
-      priority: 100
-      entryPoints: [web]
-      middlewares: [warden-flag-allowedips]
-      service: whoami-service
-
-    # D. custom blockPatterns Flag
-    router-flag-custompatterns:
-      rule: "PathPrefix(`/flag/custompatterns`)"
-      priority: 100
-      entryPoints: [web]
-      middlewares: [warden-flag-custompatterns]
-      service: whoami-service
-
-    # E. enabled: false Flag (bypasses all blocking)
-    router-flag-disabled:
-      rule: "PathPrefix(`/flag/disabled`)"
-      priority: 100
-      entryPoints: [web]
-      middlewares: [warden-flag-disabled]
-      service: whoami-service
-
+    # 14. Port 8093: Methods filter test (inspects only POST & DELETE)
+    router-8093:
+      rule: "PathPrefix(`/`)"
+      entryPoints: [ep8093]
+      middlewares: [warden-8093]
+      service: echo-service
 
   services:
-    whoami-service:
+    echo-service:
       loadBalancer:
         servers:
-          - url: "http://whoami:80"
+          - url: "http://echo-backend:8888"
 
   middlewares:
-    # 1. fakeSuccess / decoy honeypot
-    warden-fakesuccess:
+    # 1. Port 8080: Core & JSON mode (custom patterns, IP allowlist, check_query, debug, security_log)
+    warden-8080:
       plugin:
         routewarden:
           enabled: true
           debug: true
-          mode: fakeSuccess
-
-    # 2. JSON error
-    warden-json:
-      plugin:
-        routewarden:
-          enabled: true
-          debug: true
-          mode: json
-          statusCode: 403
-
-    # 3. HTML styled page
-    warden-html:
-      plugin:
-        routewarden:
-          enabled: true
-          debug: true
-          mode: html
-          statusCode: 403
-
-    # 4. Silent Drop (Connection reset / empty reply)
-    warden-silentdrop:
-      plugin:
-        routewarden:
-          enabled: true
-          debug: true
-          silentDrop: true
-
-    # 5. Rate Limit Challenge
-    warden-ratelimit:
-      plugin:
-        routewarden:
-          enabled: true
-          debug: true
-          mode: rateLimit
+          securityLog: true
+          checkQuery: true
+          pathPatterns:
+            - "(?i)^/admin/secret.*$"
+          allowPatterns:
+            - "(?i)^/api/healthz$"
+          allowedIps:
+            - "192.168.100.50/32"
+            - "10.99.0.0/16"
+          methods:
+            - GET
+            - POST
           response:
-            retryAfterSeconds: 60
+            mode: json
+            statusCode: 403
+            headers:
+              X-RouteWarden-Protection: Active
+            body: "{\"error\":\"Access Denied\",\"security\":\"routewarden\"}"
 
-    # 6. Redirect
-    warden-redirect:
+    # 2. Port 8081: HTML mode
+    warden-8081:
       plugin:
         routewarden:
           enabled: true
-          debug: true
-          mode: redirect
           response:
-            redirectUrl: "https://example.com/security-warning"
+            mode: html
+            statusCode: 403
+            headers:
+              X-RouteWarden-Mode: html
+            body: "<html><body><h1>Access Denied by RouteWarden</h1></body></html>"
 
-    # 7. XML
-    warden-xml:
+    # 3. Port 8082: Plain Text mode
+    warden-8082:
       plugin:
         routewarden:
           enabled: true
-          debug: true
-          mode: xml
-
-    # 8. Captcha
-    warden-captcha:
-      plugin:
-        routewarden:
-          enabled: true
-          debug: true
-          mode: captcha
           response:
+            mode: text
+            statusCode: 403
+            headers:
+              X-RouteWarden-Mode: text
+            body: "Access Forbidden: RouteWarden Text Mode"
+
+    # 4. Port 8083: XML mode
+    warden-8083:
+      plugin:
+        routewarden:
+          enabled: true
+          response:
+            mode: xml
+            statusCode: 403
+            headers:
+              X-RouteWarden-Mode: xml
+
+    # 5. Port 8084: Captcha mode (Turnstile challenge)
+    warden-8084:
+      plugin:
+        routewarden:
+          enabled: true
+          response:
+            mode: captcha
+            statusCode: 403
             captcha:
               provider: "turnstile"
-              title: "RouteWarden Challenge"
+              siteKey: "0x4AAAAAAtestkey"
+              title: "Security Verification Challenge"
 
-    # 9. Gzip Bomb
-    warden-gzipbomb:
+    # 6. Port 8085: Redirect mode
+    warden-8085:
       plugin:
         routewarden:
           enabled: true
-          debug: true
-          mode: gzipBomb
-
-    # 10. Garbage Stream
-    warden-garbagestream:
-      plugin:
-        routewarden:
-          enabled: true
-          debug: true
-          mode: garbageStream
           response:
-            streamSizeMB: 1
+            mode: redirect
+            statusCode: 302
+            redirectUrl: "https://honeypot.local/sinkhole"
 
-    # 11. Plain Text
-    warden-text:
+    # 7. Port 8086: RateLimitChallenge mode
+    warden-8086:
       plugin:
         routewarden:
           enabled: true
-          debug: true
-          mode: text
+          response:
+            mode: rateLimitChallenge
+            statusCode: 429
+            retryAfterSeconds: 180
 
-    # --- Flag & Feature Middleware Definitions ---
-    # A. checkQuery: true (inspect query string params)
-    warden-flag-checkquery:
+    # 8. Port 8087: FakeSuccess / Decoy mode
+    warden-8087:
       plugin:
         routewarden:
           enabled: true
-          debug: true
-          checkQuery: true
-          mode: json
+          response:
+            mode: fakeSuccess
 
-    # B. methods: ["POST"] (GET requests bypass, POST requests blocked on sensitive paths)
-    warden-flag-methods:
+    # 9. Port 8088: GzipBomb mode
+    warden-8088:
       plugin:
         routewarden:
           enabled: true
-          debug: true
-          methods:
-            - POST
-          mode: json
+          response:
+            mode: gzipBomb
+            statusCode: 200
+            gzipBombMB: 1
 
-    # C. allowedIps: exempt local subnet & loopback from blocking
-    warden-flag-allowedips:
+    # 10. Port 8089: SilentDrop mode
+    warden-8089:
       plugin:
         routewarden:
           enabled: true
-          debug: true
-          allowedIps:
-            - "127.0.0.1/32"
-            - "::1/128"
-            - "10.0.0.0/8"
-            - "172.16.0.0/12"
-            - "192.168.0.0/16"
-          mode: json
+          silentDrop: true
 
-    # D. blockPatterns: custom regex patterns (`(?i)^/admin/secret$`)
-    warden-flag-custompatterns:
+    # 11. Port 8090: InfiniteStream mode
+    warden-8090:
       plugin:
         routewarden:
           enabled: true
-          debug: true
-          enableDefaultPatterns: false
-          blockPatterns:
-            - "(?i)^/flag/custompatterns/secret$"
-          mode: json
+          response:
+            mode: infiniteStream
+            statusCode: 200
+            streamSizeMB: 2
 
-    # E. enabled: false (completely bypasses RouteWarden)
-    warden-flag-disabled:
+    # 12. Port 8091: Proxy mode (forwarded to honeypot)
+    warden-8091:
+      plugin:
+        routewarden:
+          enabled: true
+          response:
+            mode: proxy
+            proxyUrl: "http://honeypot:9999"
+
+    # 13. Port 8092: Disabled flag test
+    warden-8092:
       plugin:
         routewarden:
           enabled: false
-          debug: true
-          mode: json
 
+    # 14. Port 8093: Methods filter test (inspects only POST & DELETE)
+    warden-8093:
+      plugin:
+        routewarden:
+          enabled: true
+          methods:
+            - POST
+            - DELETE
+          response:
+            mode: json
+            statusCode: 403
