@@ -80,11 +80,18 @@ func ExtractCandidatePaths(rawPath, pathStr, requestURI string) []string {
 		}
 	}
 
-	// Deduplicate candidates
+	// Deduplicate candidates and ensure canonical leading slash
 	candidatePaths := make([]string, 0, len(pathsToCheck))
 	seen := make(map[string]struct{}, len(pathsToCheck))
 	for _, p := range pathsToCheck {
-		if _, exists := seen[p]; !exists && p != "" {
+		if p == "" {
+			continue
+		}
+		if !strings.HasPrefix(p, "/") {
+			p = "/" + p
+		}
+		p = path.Clean(p)
+		if _, exists := seen[p]; !exists {
 			seen[p] = struct{}{}
 			candidatePaths = append(candidatePaths, p)
 		}

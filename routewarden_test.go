@@ -48,6 +48,12 @@ func TestRouteWarden_Defaults(t *testing.T) {
 		{"Block package-lock.json", "/package-lock.json", http.StatusForbidden},
 		{"Block phpinfo", "/phpinfo.php", http.StatusForbidden},
 		{"Block actuator", "/actuator/health", http.StatusForbidden},
+		{"Block private key (.key)", "/server.key", http.StatusForbidden},
+		{"Block certificate (.pem)", "/cert.pem", http.StatusForbidden},
+		{"Block Dockerfile", "/Dockerfile", http.StatusForbidden},
+		{"Block docker-compose", "/docker-compose.yml", http.StatusForbidden},
+		{"Block .DS_Store", "/.DS_Store", http.StatusForbidden},
+		{"Block wp-config.php", "/wp-config.php", http.StatusForbidden},
 
 		// URL-encoded evasion attempts
 		{"Block encoded .env (%2eenv)", "/%2eenv", http.StatusForbidden},
@@ -1237,4 +1243,47 @@ func TestRouteWarden_CheckQuery_RawQueryOnly(t *testing.T) {
 		t.Errorf("expected 403 when raw query matches pattern, got %d", rr.Code)
 	}
 }
+
+func TestRouteWarden_CheckHeaders(t *testing.T) {
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("OK"))
+	})
+
+	cfg := traefik_warden.CreateConfig()
+	cfg.CheckHeaders = []string{"X-Forwarded-Uri", "X-Rewrite-URL", "X-Original-URL"}
+
+	handler, err := traefik_warden.New(context.Background(), next, cfg, "check-headers-test")
+	if err != nil {
+		t.Fatalf("failed to create plugin: %v", err)
+	}
+
+	// 1. Clean request with benign headers should pass
+	req := httptest.NewRequest(http.MethodGet, "/api/dashboard", nil)
+	req.Header.Set("X-Forwarded-Uri", "/api/dashboard")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Errorf("expected 200 for clean forwarded header, got %d", rr.Code)
+	}
+
+	// 2. Request with smuggled sensitive path in X-Forwarded-Uri
+	req = httptest.NewRequest(http.MethodGet, "/api/dashboard", nil)
+	req.Header.Set("X-Forwarded-Uri", "/.env")
+	rr = httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("expected 403 for smuggled .env in X-Forwarded-Uri, got %d", rr.Code)
+	}
+
+	// 3. Request with URL-encoded path in X-Rewrite-URL
+	req = httptest.NewRequest(http.MethodGet, "/api/dashboard", nil)
+	req.Header.Set("X-Rewrite-URL", "/%2e%2e/.git/config")
+	rr = httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("expected 403 for smuggled .git/config in X-Rewrite-URL, got %d", rr.Code)
+	}
+}
+
 

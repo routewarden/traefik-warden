@@ -25,6 +25,7 @@ type RouteWarden struct {
 	allowRegexes    []*regexp.Regexp
 	ipFilter        *IPFilter
 	checkQuery      bool
+	checkHeaders    []string
 	responseHandler *ResponseHandler
 }
 
@@ -106,6 +107,14 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		return nil, fmt.Errorf("routewarden [%s]: %w", name, err)
 	}
 
+	cleanedHeaders := make([]string, 0, len(config.CheckHeaders))
+	for _, h := range config.CheckHeaders {
+		h = strings.TrimSpace(h)
+		if h != "" {
+			cleanedHeaders = append(cleanedHeaders, h)
+		}
+	}
+
 	rw := &RouteWarden{
 		next:            next,
 		name:            name,
@@ -117,6 +126,7 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		allowRegexes:    compiledAllowRegexes,
 		ipFilter:        ipFilter,
 		checkQuery:      config.CheckQuery,
+		checkHeaders:    cleanedHeaders,
 		responseHandler: respHandler,
 	}
 
@@ -238,6 +248,25 @@ func (rw *RouteWarden) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				if re := rw.findMatchingBlock(val); re != nil {
 					rw.logDebug("query param %q with value %q blocked by pattern %q", key, val, re.String())
 					rw.logSecurityEvent(req, val, re.String(), "query_param_blocked")
+					rw.responseHandler.ServeBlockedRequest(w, req)
+					return
+				}
+			}
+		}
+	}
+
+	// 4. Optional: Check specified forwarded/rewrite headers for path evasion & sensitive endpoints
+	if len(rw.checkHeaders) > 0 {
+		for _, headerName := range rw.checkHeaders {
+			headerVal := strings.TrimSpace(req.Header.Get(headerName))
+			if headerVal == "" {
+				continue
+			}
+			headerCandidates := ExtractCandidatePaths("", headerVal, headerVal)
+			for _, hc := range headerCandidates {
+				if re := rw.findMatchingBlock(hc); re != nil {
+					rw.logDebug("header %q with value %q blocked by pattern %q", headerName, headerVal, re.String())
+					rw.logSecurityEvent(req, headerVal, re.String(), "header_blocked")
 					rw.responseHandler.ServeBlockedRequest(w, req)
 					return
 				}

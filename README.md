@@ -62,7 +62,7 @@ services:
       - "--providers.docker=true"
       - "--entrypoints.web.address=:80"
       - "--experimental.plugins.routewarden.modulename=github.com/routewarden/traefik-warden"
-      - "--experimental.plugins.routewarden.version=v1.0.0"
+      - "--experimental.plugins.routewarden.version=v1.1.0"
     ports:
       - "80:80"
     volumes:
@@ -100,7 +100,7 @@ experimental:
   plugins:
     routewarden:
       moduleName: github.com/routewarden/traefik-warden
-      version: v1.0.0
+      version: v1.1.0
 ```
 
 #### 2. Dynamic Configuration (`dynamic_conf.yml`)
@@ -162,6 +162,35 @@ http:
 
 > For the complete list of settings (including Captcha keys, custom HTML templates, and header injection), read the **[Full Configuration Reference](https://routewarden.github.io/docs/reference/configuration)**.  
 > **Note on `gzipBomb`**: Use this mode only on verified honeypot paths or endpoints targeted exclusively by bots (such as `/.env` or `/wp-login.php`). Never use it on shared generic routes where normal users or legitimate crawlers might get caught. Always keep `enableDefaultAllowPatterns: true` to avoid blocking `/robots.txt`.
+
+---
+
+## CLI & Config Generation
+
+You can use the official [`rwarden`](https://routewarden.github.io/cli/) CLI tool to test path rules offline, validate configurations, and automatically generate Traefik dynamic YAML or Docker Compose labels directly from a unified `routewarden.json` schema:
+
+```bash
+# Install RouteWarden CLI
+curl -fsSL https://routewarden.github.io/cli/install.sh | bash
+
+# Or run via Docker
+docker run --rm ghcr.io/routewarden/cli:latest version
+```
+
+### Generating Traefik Configurations:
+
+```bash
+# Generate Traefik dynamic YAML middleware definition (dynamic.yml)
+rwarden generate --target traefik --config routewarden.json > dynamic.yml
+
+# Generate Docker Compose labels block
+rwarden generate --target traefik-labels --config routewarden.json
+
+# Test a suspicious probe path against rules offline
+rwarden test --path "/.env"
+```
+
+For complete documentation on the CLI, installation methods, and options, visit the **[RouteWarden CLI Documentation](https://routewarden.github.io/cli/)**.
 
 ---
 

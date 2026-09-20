@@ -5,7 +5,7 @@ This directory provides a multi-port Docker Compose environment and an automated
 ## Architecture
 
 The test environment provisions:
-1. **Traefik Container**: Loads RouteWarden via `localPlugins` directly from source code and exposes 14 dedicated test ports mapped in `samples/dynamic.yml` and `samples/docker-compose.yml`.
+1. **Traefik Container**: Loads RouteWarden via `localPlugins` directly from source code and exposes 15 dedicated test ports mapped in `samples/dynamic.yml` and `samples/docker-compose.yml`.
 2. **Honeypot Backend Container**: A lightweight Python HTTP server on port `9999` to verify `mode proxy` (transparent honeypot redirection).
 3. **Echo Backend Container**: A lightweight Python HTTP server on port `8888` simulating protected upstream microservices.
 
@@ -27,7 +27,7 @@ samples/
 
 | Port | Mode / Feature | Verification Scenario |
 | :--- | :--- | :--- |
-| **8080** | Core & JSON | Built-in `.env`, `.git`, SQL dumps, actuator endpoints; anti-evasion traversal (`%252e%252e`), matrix parameters (`/;param`); `check_query`; IP allowlist bypass via `allowed_ips`; `allow_patterns` overrides. |
+| **8080** | Core & JSON | Built-in sensitive files (`.env`, `.git`, SQL dumps, actuator endpoints, `.aws` credentials, `package-lock.json`, TLS `.key`/`.pem`, `docker-compose.yml`, `.DS_Store`, `wp-config.php`); anti-evasion traversal (`%252e%252e`), matrix parameters (`/;param`); `check_query`; IP allowlist bypass via `allowed_ips`; `allow_patterns` overrides. |
 | **8081** | `html` | Returns custom HTML error page with `text/html` headers. |
 | **8082** | `text` | Returns plain text message with `text/plain` headers. |
 | **8083** | `xml` | Returns structured `<Error>` XML document. |
@@ -41,6 +41,7 @@ samples/
 | **8091** | `proxy` | Transparently reverse-proxies blocked probes to honeypot backend container. |
 | **8092** | `disable` | Flag verification: RouteWarden disabled, all requests pass through to upstream. |
 | **8093** | `methods` | Verb filter verification: Only inspects `POST` & `DELETE`; `GET` bypasses filter. |
+| **8094** | `checkHeaders` | Header inspection: Blocks requests where `X-Forwarded-Uri` or `X-Rewrite-URL` header contains a sensitive path (e.g. `/.env`, `/.git`). |
 
 ---
 
