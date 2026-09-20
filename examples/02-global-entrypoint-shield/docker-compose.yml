@@ -7,7 +7,7 @@ services:
       - "--providers.docker.exposedbydefault=false"
       - "--entrypoints.web.address=:80"
       - "--experimental.plugins.routewarden.modulename=github.com/routewarden/traefik-warden"
-      - "--experimental.plugins.routewarden.version=v0.3.3"
+      - "--experimental.plugins.routewarden.version=v1.0.0"
       # Attach global-warden middleware to all entrypoint traffic automatically
       - "--entrypoints.web.http.middlewares=global-warden@docker"
     ports:
