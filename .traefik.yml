@@ -1,7 +1,8 @@
 displayName: RouteWarden
 type: middleware
 import: github.com/routewarden/traefik-warden
-icon: assets/icon.png
+iconPath: assets/icon.png
+bannerPath: assets/banner.png
 
 summary: 'Block requests targeting sensitive endpoints, files (.env, configs, backups), or custom path regexes with custom JSON, HTML, Captcha, or status codes.'
 
