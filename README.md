@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="assets/icon.svg" alt="RouteWarden Logo" width="140" height="140" />
+  <img src="assets/banner.png" alt="RouteWarden Logo" width="640" height="240" />
   <h1>RouteWarden</h1>
   <p><strong>Lightweight Traefik middleware to block sensitive file exposure (.env, .git, backups), neutralize path-evasion tricks, whitelist trusted IPs, and respond cleanly before requests hit your backend.</strong></p>
 </div>
@@ -47,67 +47,86 @@ Web apps accidentally expose sensitive files and administration paths all the ti
 
 ---
 
-## Quick Start (Return 404 on Probes)
+## Quick Start: Global Protection via EntryPoints (Protect All Services)
 
-Returning a standard `404 Not Found` is often the best choice: attackers cannot distinguish between a protected secret and a path that never existed.
+Instead of manually attaching `routewarden` to every individual router across dozens of microservices or containers, attaching RouteWarden directly to Traefik's **entryPoints** (e.g. `web` on `:80` and `websecure` on `:443`) enforces security inspection **globally for all incoming requests** before any router or backend is reached.
 
-### Option A: Docker Compose
+### Option A: Docker Compose (Global EntryPoint Shield)
+
+All containers routed through Traefik are protected automatically—no router labels required on developer services:
 
 ```yaml
 services:
   traefik:
-    image: traefik:v3.1
+    image: traefik:v3.3
     command:
       - "--api.insecure=true"
       - "--providers.docker=true"
       - "--entrypoints.web.address=:80"
+      # Attach routewarden globally to entryPoint 'web'
+      - "--entrypoints.web.http.middlewares=warden-shield@docker"
       - "--experimental.plugins.routewarden.modulename=github.com/routewarden/traefik-warden"
-      - "--experimental.plugins.routewarden.version=v1.1.0"
+      - "--experimental.plugins.routewarden.version=v1.2.0"
     ports:
       - "80:80"
     volumes:
       - "/var/run/docker.sock:/var/run/docker.sock:ro"
+    labels:
+      - "traefik.enable=true"
+      # Global EntryPoint middleware definition
+      - "traefik.http.middlewares.warden-shield.plugin.routewarden.enabled=true"
+      - "traefik.http.middlewares.warden-shield.plugin.routewarden.enableDefaultPatterns=true"
+      - "traefik.http.middlewares.warden-shield.plugin.routewarden.response.mode=text"
+      - "traefik.http.middlewares.warden-shield.plugin.routewarden.response.statusCode=404"
+      - "traefik.http.middlewares.warden-shield.plugin.routewarden.response.body=404 page not found"
 
+  # Any upstream service is now shielded automatically:
   webapp:
     image: nginx:alpine
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.webapp.rule=Host(`localhost`)"
       - "traefik.http.routers.webapp.entrypoints=web"
-      - "traefik.http.routers.webapp.middlewares=warden-shield"
-
-      # (Default: true) Enable middleware
-      - "traefik.http.middlewares.warden-shield.plugin.routewarden.enabled=true"
-      # (Default: true) Block common sensitive files (.env*, .git, .aws, .sql, .bak, .log, etc.)
-      - "traefik.http.middlewares.warden-shield.plugin.routewarden.enableDefaultPatterns=true"
-      # (Default: []) (Optional) Custom regex patterns to block
-      - "traefik.http.middlewares.warden-shield.plugin.routewarden.pathPatterns=(?i)^/admin(/.*)?$,(?i)^/api/internal(/.*)?$"
-      # (Optional) Exceptions that should always be allowed (Default: [])
-      - "traefik.http.middlewares.warden-shield.plugin.routewarden.allowPatterns=(?i)^/api/internal/health$,(?i)^/robots\\.txt$"
-      # Return 404 instead of 403 (Default mode: text, Default statusCode: 403)
-      - "traefik.http.middlewares.warden-shield.plugin.routewarden.response.mode=text"
-      - "traefik.http.middlewares.warden-shield.plugin.routewarden.response.statusCode=404"
-      - "traefik.http.middlewares.warden-shield.plugin.routewarden.response.body=404 page not found"
 ```
 
 ---
 
-### Option B: Traefik File Configuration (`dynamic_conf.yml`)
+### Option B: Traefik Static & Dynamic File Configuration
 
 #### 1. Static Configuration (`traefik.yml`)
+Attach `routewarden@file` directly to your global entryPoints:
+
 ```yaml
+entryPoints:
+  web:
+    address: ":80"
+    http:
+      middlewares:
+        - warden-shield@file
+  websecure:
+    address: ":443"
+    http:
+      middlewares:
+        - warden-shield@file
+
+providers:
+  file:
+    filename: /etc/traefik/dynamic_conf.yml
+
 experimental:
   plugins:
     routewarden:
       moduleName: github.com/routewarden/traefik-warden
-      version: v1.1.0
+      version: v1.2.0
 ```
 
 #### 2. Dynamic Configuration (`dynamic_conf.yml`)
+Define the RouteWarden middleware once in your dynamic provider:
+
 ```yaml
 http:
   middlewares:
-    warden-404:
+    warden-shield:
       plugin:
         routewarden:
           enabled: true
@@ -131,14 +150,14 @@ http:
             body: "404 page not found"
 
   routers:
+    # Router needs no middleware declaration—it is protected globally by the entryPoint!
     app-router:
       rule: "Host(`app.example.com`)"
       entryPoints:
         - web
-      middlewares:
-        - warden-404
       service: app-service
 ```
+
 
 ---
 
@@ -181,7 +200,10 @@ docker run --rm ghcr.io/routewarden/cli:latest version
 
 ```bash
 # Generate Traefik dynamic YAML middleware definition (dynamic.yml)
-rwarden generate --target traefik --config routewarden.json > dynamic.yml
+rwarden generate --target traefik-yaml --config routewarden.json > dynamic.yml
+
+# Generate Traefik dynamic TOML middleware definition (dynamic.toml)
+rwarden generate --target traefik-toml --config routewarden.json > dynamic.toml
 
 # Generate Docker Compose labels block
 rwarden generate --target traefik-labels --config routewarden.json
@@ -203,7 +225,7 @@ For detailed setup instructions, architecture deep dives, and production example
 - [Architecture & Request Pipeline](https://routewarden.github.io/docs/guide/architecture)
 - [Local Development & Testing](https://routewarden.github.io/docs/guide/local-deployment)
 - [Testing Architecture & Coverage](https://routewarden.github.io/docs/guide/testing)
-- [Configuration Reference](https://routewarden.github.io/docs/reference/configuration)
+- [Configuration Reference](https://routewarden.github.io/docs/traefik/configuration)
 - [Response Modes & Defense Actions](https://routewarden.github.io/docs/reference/response-modes)
 - [Custom Path Patterns & Regex](https://routewarden.github.io/docs/reference/custom-paths)
 - [Anti-Evasion Engine](https://routewarden.github.io/docs/reference/anti-evasion)
