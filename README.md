@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="assets/icon.svg" alt="RouteWarden Logo" width="140" height="140" />
+  <img src="assets/banner.png" alt="RouteWarden Logo" width="140" height="140" />
   <h1>RouteWarden</h1>
   <p><strong>Lightweight Traefik middleware to block sensitive file exposure (.env, .git, backups), neutralize path-evasion tricks, whitelist trusted IPs, and respond cleanly before requests hit your backend.</strong></p>
 </div>

@@ -10,7 +10,7 @@ The canonical version of RouteWarden is stored in [`version.json`](version.json)
 
 ```json
 {
-  "version": "v0.2.4"
+  "version": "v1.2.0"
 }
 ```
 
