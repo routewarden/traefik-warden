@@ -159,3 +159,31 @@ func TestIPFilter_XForwardedFor_MultipleIPs(t *testing.T) {
 		t.Errorf("expected first IP in X-Forwarded-For (not whitelisted) to be rejected")
 	}
 }
+
+func TestIPFilter_PortAndBracketStripping(t *testing.T) {
+	filter, err := traefik_warden.NewIPFilter([]string{"192.168.1.50", "2001:db8::99"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// 1. IPv4 with port in X-Forwarded-For
+	req1 := httptest.NewRequest(http.MethodGet, "/", nil)
+	req1.Header.Set("X-Forwarded-For", "192.168.1.50:49200, 10.0.0.1")
+	if !filter.IsAllowed(req1) {
+		t.Errorf("expected IPv4 with port in XFF to be stripped and allowed")
+	}
+
+	// 2. IPv6 with brackets and port in X-Forwarded-For
+	req2 := httptest.NewRequest(http.MethodGet, "/", nil)
+	req2.Header.Set("X-Forwarded-For", "[2001:db8::99]:55432")
+	if !filter.IsAllowed(req2) {
+		t.Errorf("expected bracketed IPv6 with port in XFF to be allowed")
+	}
+
+	// 3. IPv6 with brackets only in X-Real-IP
+	req3 := httptest.NewRequest(http.MethodGet, "/", nil)
+	req3.Header.Set("X-Real-IP", "[2001:db8::99]")
+	if !filter.IsAllowed(req3) {
+		t.Errorf("expected bracketed IPv6 in X-Real-IP to be allowed")
+	}
+}
