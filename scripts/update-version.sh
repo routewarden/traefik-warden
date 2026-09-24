@@ -58,6 +58,7 @@ UPDATED_COUNT=0
 # List of files to update
 FILES=(
   "README.md"
+  "VERSIONING.md"
   "examples/01-basic-sensitive-files/docker-compose.yml"
   "examples/02-global-entrypoint-shield/docker-compose.yml"
   "examples/03-ip-whitelist-vpn/docker-compose.yml"
@@ -73,6 +74,9 @@ for REL_PATH in "${FILES[@]}"; do
 
     # Replace YAML version property: version: vX.Y.Z
     sed -i '' -E "s|(version:[[:space:]]+)v?[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?|\1${TARGET_VERSION}|g" "$FILE_PATH"
+
+    # Replace JSON version property (for VERSIONING.md documentation code blocks): "version": "vX.Y.Z"
+    sed -i '' -E "s|(\"version\"[[:space:]]*:[[:space:]]*\")v?[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\")|\1${TARGET_VERSION}\3|g" "$FILE_PATH"
 
     echo "  ✓ Synchronized ${REL_PATH}"
     UPDATED_COUNT=$((UPDATED_COUNT + 1))

@@ -72,7 +72,6 @@ type Config struct {
 	Methods                    []string        `json:"methods,omitempty"`                    // HTTP verbs to inspect (defaults to ["GET"])
 	StatusCode                 int             `json:"statusCode,omitempty"`
 	CustomResponseText         string          `json:"customResponseText,omitempty"`
-	SilentDrop                 bool            `json:"silentDrop,omitempty"`
 	Action                     string          `json:"action,omitempty"`                     // Convenience alias for response mode (e.g. "silentDrop", "fakeSuccess", "json")
 	Mode                       string          `json:"mode,omitempty"`                       // Convenience alias for response mode
 	CheckQuery                 bool            `json:"checkQuery,omitempty"`
@@ -95,7 +94,6 @@ func CreateConfig() *Config {
 		Methods:                    []string{"GET"},
 		StatusCode:                 http.StatusForbidden,
 		CustomResponseText:         "403 Forbidden: Access to sensitive endpoint is blocked",
-		SilentDrop:                 false,
 		Action:                     "",
 		Mode:                       "",
 		CheckQuery:                 false,

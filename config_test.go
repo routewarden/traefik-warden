@@ -22,9 +22,6 @@ func TestCreateConfig_Defaults(t *testing.T) {
 	if cfg.StatusCode != http.StatusForbidden {
 		t.Errorf("expected StatusCode to default to %d, got %d", http.StatusForbidden, cfg.StatusCode)
 	}
-	if cfg.SilentDrop {
-		t.Errorf("expected SilentDrop to default to false")
-	}
 	if cfg.CheckQuery {
 		t.Errorf("expected CheckQuery to default to false")
 	}

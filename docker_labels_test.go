@@ -23,7 +23,7 @@ func TestTraefikDockerLabelsSimulation(t *testing.T) {
 		"debug": true,
 		"enableDefaultPatterns": true,
 		"enableDefaultAllowPatterns": false,
-		"silentDrop": true,
+		"mode": "silentDrop",
 		"response": {
 			"mode": "silentDrop"
 		}
@@ -37,8 +37,8 @@ func TestTraefikDockerLabelsSimulation(t *testing.T) {
 	if !cfg.Debug {
 		t.Errorf("expected Debug to be true after unmarshaling labels")
 	}
-	if !cfg.SilentDrop {
-		t.Errorf("expected SilentDrop to be true after unmarshaling labels")
+	if cfg.Mode != "silentDrop" {
+		t.Errorf("expected Mode to be silentDrop after unmarshaling labels")
 	}
 	if cfg.Response == nil || cfg.Response.Mode != "silentDrop" {
 		t.Errorf("expected Response.Mode to be silentDrop")
