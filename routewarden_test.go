@@ -949,6 +949,24 @@ func TestRouteWarden_CheckQuery_EdgeCases(t *testing.T) {
 			t.Errorf("expected 200 for no query string, got %d", rr.Code)
 		}
 	})
+
+	t.Run("Query parameter key matches sensitive pattern", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/search?foo=bar&.env=1", nil)
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		if rr.Code != http.StatusForbidden {
+			t.Errorf("expected 403 when query key is .env, got %d", rr.Code)
+		}
+	})
+
+	t.Run("Query parameter value with path traversal", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/search?file=/images/../.env", nil)
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		if rr.Code != http.StatusForbidden {
+			t.Errorf("expected 403 when query value normalizes to .env, got %d", rr.Code)
+		}
+	})
 }
 
 func TestRouteWarden_Methods_WithCheckQuery(t *testing.T) {

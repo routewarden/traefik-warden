@@ -27,14 +27,16 @@ func ExtractCandidatePaths(rawPath, pathStr, requestURI string) []string {
 	}
 
 	// 3. Perform iterative unescaping to prevent multi-layer URL encoding evasion (e.g. %252e%252e)
-	curPath := pathStr
-	for i := 0; i < 3; i++ {
-		unescaped, err := url.PathUnescape(curPath)
-		if err != nil || unescaped == curPath {
-			break
+	for _, initial := range []string{pathStr, rawURIPath} {
+		curPath := initial
+		for i := 0; i < 3; i++ {
+			unescaped, err := url.PathUnescape(curPath)
+			if err != nil || unescaped == curPath {
+				break
+			}
+			pathsToCheck = append(pathsToCheck, path.Clean(unescaped))
+			curPath = unescaped
 		}
-		pathsToCheck = append(pathsToCheck, path.Clean(unescaped))
-		curPath = unescaped
 	}
 
 	// 4. Check backslash-converted paths (Windows / IIS style path traversal / separator evasion)

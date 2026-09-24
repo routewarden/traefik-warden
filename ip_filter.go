@@ -83,7 +83,7 @@ func ExtractClientIP(req *http.Request) string {
 		if len(parts) > 0 {
 			ip := strings.TrimSpace(parts[0])
 			if ip != "" {
-				return ip
+				return cleanIP(ip)
 			}
 		}
 	}
@@ -92,15 +92,23 @@ func ExtractClientIP(req *http.Request) string {
 	if xrip := req.Header.Get("X-Real-IP"); xrip != "" {
 		ip := strings.TrimSpace(xrip)
 		if ip != "" {
-			return ip
+			return cleanIP(ip)
 		}
 	}
 
 	// Fallback to RemoteAddr (host:port)
 	host, _, err := net.SplitHostPort(req.RemoteAddr)
 	if err == nil && host != "" {
-		return host
+		return strings.Trim(host, "[]")
 	}
 
-	return req.RemoteAddr
+	return strings.Trim(strings.TrimSpace(req.RemoteAddr), "[]")
+}
+
+func cleanIP(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if host, _, err := net.SplitHostPort(raw); err == nil {
+		raw = host
+	}
+	return strings.Trim(raw, "[]")
 }

@@ -228,7 +228,8 @@ http:
       plugin:
         routewarden:
           enabled: true
-          silentDrop: true
+          response:
+            mode: silentDrop
 
     # 11. Port 8090: InfiniteStream mode
     warden-8090:

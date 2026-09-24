@@ -173,7 +173,7 @@ func NewResponseHandler(respCfg *ResponseConfig, topStatusCode int, topCustomTex
 	}
 
 	isSilentDrop := silentDrop
-	if respCfg != nil && (strings.EqualFold(respCfg.Mode, "silentdrop") || strings.EqualFold(respCfg.Mode, "drop")) {
+	if respCfg != nil && (strings.EqualFold(respCfg.Mode, "silentdrop") || strings.EqualFold(respCfg.Mode, "silent_drop") || strings.EqualFold(respCfg.Mode, "drop")) {
 		isSilentDrop = true
 	}
 
@@ -365,7 +365,7 @@ func (h *ResponseHandler) ServeBlockedRequest(w http.ResponseWriter, req *http.R
 
 	case "fakesuccess", "decoy":
 		// Serve synthetic honeypot payloads simulating real assets
-		p := strings.ToLower(req.URL.Path)
+		p := strings.ToLower(req.URL.Path + " " + req.RequestURI)
 		contentType := "text/plain; charset=utf-8"
 		body := h.config.Body
 

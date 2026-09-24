@@ -4,13 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"log"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
-	"github.com/routewarden/traefik-warden"
+	traefik_warden "github.com/routewarden/traefik-warden"
 )
 
 // TestTraefikDockerLabelsSimulation verifies that configuration structures produced by
@@ -44,11 +45,10 @@ func TestTraefikDockerLabelsSimulation(t *testing.T) {
 		t.Errorf("expected Response.Mode to be silentDrop")
 	}
 
-	// Capture log output to verify debug logs
-	var logBuf bytes.Buffer
-	origOutput := log.Writer()
-	log.SetOutput(&logBuf)
-	defer log.SetOutput(origOutput)
+	// Capture stdout to verify debug logs (logDebug writes to os.Stdout)
+	oldStdout := os.Stdout
+	pr, pw, _ := os.Pipe()
+	os.Stdout = pw
 
 	dummyHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -56,6 +56,8 @@ func TestTraefikDockerLabelsSimulation(t *testing.T) {
 
 	handler, err := traefik_warden.New(context.Background(), dummyHandler, cfg, "routewarden-docker-test")
 	if err != nil {
+		pw.Close()
+		os.Stdout = oldStdout
 		t.Fatalf("failed to create RouteWarden from decoded labels: %v", err)
 	}
 
@@ -64,6 +66,12 @@ func TestTraefikDockerLabelsSimulation(t *testing.T) {
 	rec := httptest.NewRecorder()
 
 	handler.ServeHTTP(rec, req)
+
+	pw.Close()
+	os.Stdout = oldStdout
+
+	var logBuf bytes.Buffer
+	io.Copy(&logBuf, pr)
 
 	logOutput := logBuf.String()
 	if !strings.Contains(logOutput, "[DEBUG] routewarden [routewarden-docker-test]") {
@@ -88,9 +96,9 @@ func TestTraefikDockerLabels_DebugFlagToggling(t *testing.T) {
 	}
 
 	var logBuf bytes.Buffer
-	origOutput := log.Writer()
-	log.SetOutput(&logBuf)
-	defer log.SetOutput(origOutput)
+	oldStdout := os.Stdout
+	pr, pw, _ := os.Pipe()
+	os.Stdout = pw
 
 	dummyHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -98,6 +106,8 @@ func TestTraefikDockerLabels_DebugFlagToggling(t *testing.T) {
 
 	handler, err := traefik_warden.New(context.Background(), dummyHandler, cfg, "debug-off-test")
 	if err != nil {
+		pw.Close()
+		os.Stdout = oldStdout
 		t.Fatalf("failed to create plugin: %v", err)
 	}
 
@@ -106,7 +116,11 @@ func TestTraefikDockerLabels_DebugFlagToggling(t *testing.T) {
 
 	handler.ServeHTTP(rec, req)
 
-	if logBuf.Len() > 0 {
+	pw.Close()
+	os.Stdout = oldStdout
+	io.Copy(&logBuf, pr)
+
+	if logBuf.Len() > 0 && strings.Contains(logBuf.String(), "[DEBUG]") {
 		t.Errorf("expected no debug logs when debug is false, got: %s", logBuf.String())
 	}
 }
