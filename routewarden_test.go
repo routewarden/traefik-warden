@@ -578,7 +578,7 @@ func TestRouteWarden_SecurityEvasionVectors(t *testing.T) {
 
 func TestRouteWarden_SilentDrop(t *testing.T) {
 	cfg := traefik_warden.CreateConfig()
-	cfg.SilentDrop = true
+	cfg.Mode = "silentDrop"
 	cfg.StatusCode = http.StatusForbidden
 
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1179,10 +1179,10 @@ func TestRouteWarden_SecurityLog_Toggling(t *testing.T) {
 		t.Errorf("expected 403, got %d", rr.Code)
 	}
 
-	// 2. SecurityLog = true with SilentDrop = true
+	// 2. SecurityLog = true with Mode = silentDrop
 	cfgSilent := traefik_warden.CreateConfig()
 	cfgSilent.SecurityLog = true
-	cfgSilent.SilentDrop = true
+	cfgSilent.Mode = "silentDrop"
 	cfgSilent.Response = nil
 
 	handlerSilent, err := traefik_warden.New(context.Background(), next, cfgSilent, "silent-sec-log")

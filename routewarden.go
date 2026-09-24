@@ -102,7 +102,8 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		respConfig.Mode = strings.TrimSpace(config.Action)
 	}
 
-	respHandler, err := NewResponseHandler(respConfig, config.StatusCode, config.CustomResponseText, config.SilentDrop)
+	isSilentDrop := strings.EqualFold(respConfig.Mode, "silentdrop") || strings.EqualFold(respConfig.Mode, "silent_drop") || strings.EqualFold(respConfig.Mode, "drop")
+	respHandler, err := NewResponseHandler(respConfig, config.StatusCode, config.CustomResponseText, isSilentDrop)
 	if err != nil {
 		return nil, fmt.Errorf("routewarden [%s]: %w", name, err)
 	}
