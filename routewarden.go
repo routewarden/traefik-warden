@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -140,7 +139,6 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 func (rw *RouteWarden) logDebug(format string, v ...interface{}) {
 	if rw.debug {
 		msg := fmt.Sprintf(format, v...)
-		log.Printf("[DEBUG] routewarden [%s]: %s", rw.name, msg)
 		fmt.Fprintf(os.Stdout, "[DEBUG] routewarden [%s]: %s\n", rw.name, msg)
 	}
 }
@@ -245,12 +243,24 @@ func (rw *RouteWarden) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 		queryParams := req.URL.Query()
 		for key, values := range queryParams {
-			for _, val := range values {
-				if re := rw.findMatchingBlock(val); re != nil {
-					rw.logDebug("query param %q with value %q blocked by pattern %q", key, val, re.String())
-					rw.logSecurityEvent(req, val, re.String(), "query_param_blocked")
+			keyCandidates := append([]string{key}, ExtractCandidatePaths("", key, key)...)
+			for _, kc := range keyCandidates {
+				if re := rw.findMatchingBlock(kc); re != nil {
+					rw.logDebug("query param key %q blocked by pattern %q", key, re.String())
+					rw.logSecurityEvent(req, key, re.String(), "query_param_blocked")
 					rw.responseHandler.ServeBlockedRequest(w, req)
 					return
+				}
+			}
+			for _, val := range values {
+				valCandidates := append([]string{val}, ExtractCandidatePaths("", val, val)...)
+				for _, vc := range valCandidates {
+					if re := rw.findMatchingBlock(vc); re != nil {
+						rw.logDebug("query param %q with value %q blocked by pattern %q", key, val, re.String())
+						rw.logSecurityEvent(req, val, re.String(), "query_param_blocked")
+						rw.responseHandler.ServeBlockedRequest(w, req)
+						return
+					}
 				}
 			}
 		}

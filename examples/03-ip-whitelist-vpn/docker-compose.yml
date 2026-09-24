@@ -7,7 +7,7 @@ services:
       - "--providers.docker.exposedbydefault=false"
       - "--entrypoints.web.address=:80"
       - "--experimental.plugins.routewarden.modulename=github.com/routewarden/traefik-warden"
-      - "--experimental.plugins.routewarden.version=v1.2.0"
+      - "--experimental.plugins.routewarden.version=v1.2.1"
     ports:
       - "80:80"
       - "8080:8080"
