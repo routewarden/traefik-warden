@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 )
@@ -150,6 +151,18 @@ func NewResponseHandler(respCfg *ResponseConfig, topStatusCode int, topCustomTex
 		}
 	}
 
+	// Validate RedirectURL at init time when mode is "redirect" (Bug 5 fix).
+	// Accepting javascript: or arbitrary schemes here would enable open redirects / XSS.
+	if strings.ToLower(respCfg.Mode) == "redirect" && strings.TrimSpace(respCfg.RedirectURL) != "" {
+		parsedRedirect, parseErr := url.ParseRequestURI(respCfg.RedirectURL)
+		if parseErr != nil {
+			return nil, fmt.Errorf("invalid redirectUrl %q: %w", respCfg.RedirectURL, parseErr)
+		}
+		if parsedRedirect.Scheme != "" && parsedRedirect.Scheme != "http" && parsedRedirect.Scheme != "https" {
+			return nil, fmt.Errorf("unsafe redirectUrl %q: only http/https or path-only URLs are allowed", respCfg.RedirectURL)
+		}
+	}
+
 	var parsedTmpl *template.Template
 	if respCfg.Mode == "captcha" {
 		tmplText := defaultCaptchaHTML
@@ -206,7 +219,10 @@ func (h *ResponseHandler) ServeBlockedRequest(w http.ResponseWriter, req *http.R
 				return
 			}
 		}
-		w.WriteHeader(h.config.StatusCode)
+		// Bug 2 fix: hijacking is unavailable (e.g. HTTP/2 or certain proxy setups).
+		// Fall back to 200 OK with an empty body rather than leaking the real block
+		// status code, which would reveal to the attacker that the endpoint is monitored.
+		w.WriteHeader(http.StatusOK)
 		return
 	}
 
@@ -282,10 +298,15 @@ func (h *ResponseHandler) ServeBlockedRequest(w http.ResponseWriter, req *http.R
 
 		if h.captchaTemplate != nil {
 			var buf bytes.Buffer
-			if err := h.captchaTemplate.Execute(&buf, data); err == nil {
-				_, _ = w.Write(buf.Bytes())
+			if err := h.captchaTemplate.Execute(&buf, data); err != nil {
+				// Bug 4 fix: log the render error so operators can diagnose template issues,
+				// then write a valid HTML fallback body (header is already sent).
+				fmt.Fprintf(os.Stderr, "[routewarden] captcha template render error: %v\n", err)
+				_, _ = fmt.Fprintln(w, "<html><body><p>Security Challenge Required</p></body></html>")
 				return
 			}
+			_, _ = w.Write(buf.Bytes())
+			return
 		}
 		_, _ = fmt.Fprintln(w, "Security Challenge Required")
 

@@ -86,7 +86,7 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		compiledAllowRegexes = append(compiledAllowRegexes, re)
 	}
 
-	ipFilter, err := NewIPFilter(config.AllowedIPs)
+	ipFilter, err := NewIPFilter(config.AllowedIPs, config.TrustedProxies)
 	if err != nil {
 		return nil, fmt.Errorf("routewarden [%s]: %w", name, err)
 	}
@@ -243,7 +243,10 @@ func (rw *RouteWarden) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 		queryParams := req.URL.Query()
 		for key, values := range queryParams {
+			// Bug 1 fix: cap the slice after append to prevent backing-array aliasing when
+			// ExtractCandidatePaths returns zero elements (shared single-element array).
 			keyCandidates := append([]string{key}, ExtractCandidatePaths("", key, key)...)
+			keyCandidates = keyCandidates[:len(keyCandidates):len(keyCandidates)]
 			for _, kc := range keyCandidates {
 				if re := rw.findMatchingBlock(kc); re != nil {
 					rw.logDebug("query param key %q blocked by pattern %q", key, re.String())
@@ -254,6 +257,7 @@ func (rw *RouteWarden) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			}
 			for _, val := range values {
 				valCandidates := append([]string{val}, ExtractCandidatePaths("", val, val)...)
+				valCandidates = valCandidates[:len(valCandidates):len(valCandidates)]
 				for _, vc := range valCandidates {
 					if re := rw.findMatchingBlock(vc); re != nil {
 						rw.logDebug("query param %q with value %q blocked by pattern %q", key, val, re.String())
