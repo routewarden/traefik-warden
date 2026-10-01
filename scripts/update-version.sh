@@ -66,17 +66,25 @@ FILES=(
   "examples/05-kubernetes-ingressroute/README.md"
 )
 
+sedi() {
+  if sed --version 2>&1 | grep -q GNU; then
+    sed -i -E "$@"
+  else
+    sed -i '' -E "$@"
+  fi
+}
+
 for REL_PATH in "${FILES[@]}"; do
   FILE_PATH="${ROOT_DIR}/${REL_PATH}"
   if [ -f "$FILE_PATH" ]; then
     # Replace CLI flag: --experimental.plugins.routewarden.version=vX.Y.Z
-    sed -i '' -E "s|(--experimental\.plugins\.routewarden\.version=)v?[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?|\1${TARGET_VERSION}|g" "$FILE_PATH"
+    sedi "s|(--experimental\.plugins\.routewarden\.version=)v?[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?|\1${TARGET_VERSION}|g" "$FILE_PATH"
 
     # Replace YAML version property: version: vX.Y.Z
-    sed -i '' -E "s|(version:[[:space:]]+)v?[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?|\1${TARGET_VERSION}|g" "$FILE_PATH"
+    sedi "s|(version:[[:space:]]+)v?[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?|\1${TARGET_VERSION}|g" "$FILE_PATH"
 
     # Replace JSON version property (for VERSIONING.md documentation code blocks): "version": "vX.Y.Z"
-    sed -i '' -E "s|(\"version\"[[:space:]]*:[[:space:]]*\")v?[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\")|\1${TARGET_VERSION}\3|g" "$FILE_PATH"
+    sedi "s|(\"version\"[[:space:]]*:[[:space:]]*\")v?[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\")|\1${TARGET_VERSION}\3|g" "$FILE_PATH"
 
     echo "  ✓ Synchronized ${REL_PATH}"
     UPDATED_COUNT=$((UPDATED_COUNT + 1))

@@ -152,9 +152,13 @@ func NewResponseHandler(respCfg *ResponseConfig, topStatusCode int, topCustomTex
 	}
 
 	// Validate RedirectURL at init time when mode is "redirect" (Bug 5 fix).
-	// Accepting javascript: or arbitrary schemes here would enable open redirects / XSS.
+	// Accepting javascript:, protocol-relative (//), or arbitrary schemes here would enable open redirects / XSS.
 	if strings.ToLower(respCfg.Mode) == "redirect" && strings.TrimSpace(respCfg.RedirectURL) != "" {
-		parsedRedirect, parseErr := url.ParseRequestURI(respCfg.RedirectURL)
+		trimmedURL := strings.TrimSpace(respCfg.RedirectURL)
+		if strings.HasPrefix(trimmedURL, "//") {
+			return nil, fmt.Errorf("unsafe redirectUrl %q: protocol-relative URLs (starting with //) are not allowed", respCfg.RedirectURL)
+		}
+		parsedRedirect, parseErr := url.ParseRequestURI(trimmedURL)
 		if parseErr != nil {
 			return nil, fmt.Errorf("invalid redirectUrl %q: %w", respCfg.RedirectURL, parseErr)
 		}

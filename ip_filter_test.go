@@ -93,6 +93,16 @@ func TestIPFilter_InvalidInputs(t *testing.T) {
 	if err2 == nil {
 		t.Errorf("expected error for invalid CIDR subnet")
 	}
+
+	_, err3 := traefik_warden.NewIPFilter([]string{"10.0.0.1"}, []string{"invalid-proxy"})
+	if err3 == nil {
+		t.Errorf("expected error for invalid trusted proxy")
+	}
+
+	_, err4 := traefik_warden.NewIPFilter([]string{"10.0.0.1"}, []string{"10.0.0.0/999"})
+	if err4 == nil {
+		t.Errorf("expected error for invalid trusted proxy CIDR")
+	}
 }
 
 func TestIPFilter_WhitespaceAndEmptyEntries(t *testing.T) {
@@ -185,5 +195,44 @@ func TestIPFilter_PortAndBracketStripping(t *testing.T) {
 	req3.Header.Set("X-Real-IP", "[2001:db8::99]")
 	if !filter.IsAllowed(req3) {
 		t.Errorf("expected bracketed IPv6 in X-Real-IP to be allowed")
+	}
+}
+
+func TestIPFilter_TrustedProxies(t *testing.T) {
+	// Whitelisted IP: 10.0.0.50
+	// Trusted proxy: 192.168.1.1 (and subnet 10.100.0.0/16)
+	filter, err := traefik_warden.NewIPFilter([]string{"10.0.0.50"}, []string{"192.168.1.1", "10.100.0.0/16"})
+	if err != nil {
+		t.Fatalf("unexpected error creating filter with trusted proxies: %v", err)
+	}
+
+	// Case 1: Untrusted client directly connecting (203.0.113.99) sends spoofed XFF
+	reqSpoofed := httptest.NewRequest(http.MethodGet, "/", nil)
+	reqSpoofed.RemoteAddr = "203.0.113.99:12345"
+	reqSpoofed.Header.Set("X-Forwarded-For", "10.0.0.50")
+	if filter.IsAllowed(reqSpoofed) {
+		t.Errorf("spoofed XFF from untrusted remote address MUST NOT be allowed")
+	}
+	if clientIP := filter.ExtractClientIP(reqSpoofed); clientIP != "203.0.113.99" {
+		t.Errorf("expected ExtractClientIP to return socket RemoteAddr 203.0.113.99, got %q", clientIP)
+	}
+
+	// Case 2: Trusted proxy (192.168.1.1) forwards legitimate client (10.0.0.50)
+	reqTrusted := httptest.NewRequest(http.MethodGet, "/", nil)
+	reqTrusted.RemoteAddr = "192.168.1.1:54321"
+	reqTrusted.Header.Set("X-Forwarded-For", "10.0.0.50, 192.168.1.1")
+	if !filter.IsAllowed(reqTrusted) {
+		t.Errorf("forwarded header from trusted proxy MUST be honoured and allowed")
+	}
+	if clientIP := filter.ExtractClientIP(reqTrusted); clientIP != "10.0.0.50" {
+		t.Errorf("expected ExtractClientIP to return forwarded client 10.0.0.50, got %q", clientIP)
+	}
+
+	// Case 3: Trusted subnet (10.100.0.5) forwards non-whitelisted client (198.51.100.1)
+	reqTrustedNotAllowed := httptest.NewRequest(http.MethodGet, "/", nil)
+	reqTrustedNotAllowed.RemoteAddr = "10.100.0.5:54321"
+	reqTrustedNotAllowed.Header.Set("X-Forwarded-For", "198.51.100.1")
+	if filter.IsAllowed(reqTrustedNotAllowed) {
+		t.Errorf("forwarded non-whitelisted IP from trusted proxy should NOT be allowed")
 	}
 }

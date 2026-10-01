@@ -143,12 +143,19 @@ func (rw *RouteWarden) logDebug(format string, v ...interface{}) {
 	}
 }
 
+func (rw *RouteWarden) extractClientIP(req *http.Request) string {
+	if rw.ipFilter != nil {
+		return rw.ipFilter.ExtractClientIP(req)
+	}
+	return ExtractClientIP(req)
+}
+
 // logSecurityEvent emits structured JSON security audit events (compatible with CrowdSec, SIEM, fail2ban).
 func (rw *RouteWarden) logSecurityEvent(req *http.Request, matchedTarget string, pattern string, reason string) {
 	if !rw.securityLog {
 		return
 	}
-	clientIP := ExtractClientIP(req)
+	clientIP := rw.extractClientIP(req)
 	mode := "text"
 	if rw.responseHandler != nil {
 		if rw.responseHandler.silentDrop {
@@ -193,7 +200,7 @@ func (rw *RouteWarden) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	// Exempt whitelisted client IPs or CIDR subnets from blocking
 	if rw.ipFilter.IsAllowed(req) {
-		rw.logDebug("client IP %s is whitelisted, allowing request", req.RemoteAddr)
+		rw.logDebug("client IP %s is whitelisted, allowing request", rw.extractClientIP(req))
 		rw.next.ServeHTTP(w, req)
 		return
 	}
@@ -277,7 +284,7 @@ func (rw *RouteWarden) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			if headerVal == "" {
 				continue
 			}
-			headerCandidates := ExtractCandidatePaths("", headerVal, headerVal)
+			headerCandidates := append([]string{headerVal}, ExtractCandidatePaths("", headerVal, headerVal)...)
 			for _, hc := range headerCandidates {
 				if re := rw.findMatchingBlock(hc); re != nil {
 					rw.logDebug("header %q with value %q blocked by pattern %q", headerName, headerVal, re.String())

@@ -111,6 +111,11 @@ func (f *IPFilter) IsAllowed(req *http.Request) bool {
 	return false
 }
 
+// ExtractClientIP resolves the real client IP respecting the trustedNets configuration.
+func (f *IPFilter) ExtractClientIP(req *http.Request) string {
+	return f.extractClientIP(req)
+}
+
 // extractClientIP resolves the real client IP respecting the trustedNets configuration.
 //
 // When no trusted proxies are configured, it falls back to the package-level ExtractClientIP

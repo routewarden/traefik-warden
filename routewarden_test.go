@@ -1,9 +1,13 @@
 package traefik_warden_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -1308,5 +1312,100 @@ func TestRouteWarden_CheckHeaders(t *testing.T) {
 		t.Errorf("expected 403 for smuggled .git/config in X-Rewrite-URL, got %d", rr.Code)
 	}
 }
+
+func TestRouteWarden_TrustedProxies_SecurityLog(t *testing.T) {
+	cfg := traefik_warden.CreateConfig()
+	cfg.SecurityLog = true
+	cfg.TrustedProxies = []string{"10.0.0.0/8"}
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	handler, err := traefik_warden.New(context.Background(), next, cfg, "sec-log-test")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// 1. Untrusted peer with spoofed XFF: should log socket peer IP, ignoring spoofed XFF
+	{
+		oldStdout := os.Stdout
+		rPipe, wPipe, _ := os.Pipe()
+		os.Stdout = wPipe
+
+		req := httptest.NewRequest(http.MethodGet, "/.env", nil)
+		req.RemoteAddr = "198.51.100.20:12345"
+		req.Header.Set("X-Forwarded-For", "203.0.113.199")
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+
+		wPipe.Close()
+		os.Stdout = oldStdout
+
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, rPipe)
+		rPipe.Close()
+
+		var event map[string]interface{}
+		if err := json.Unmarshal(buf.Bytes(), &event); err != nil {
+			t.Fatalf("failed to parse log JSON: %v, raw: %q", err, buf.String())
+		}
+		if event["client_ip"] != "198.51.100.20" {
+			t.Errorf("expected client_ip 198.51.100.20 from untrusted peer, got %v", event["client_ip"])
+		}
+	}
+
+	// 2. Trusted proxy peer: should honor XFF and log forwarded client IP
+	{
+		oldStdout := os.Stdout
+		rPipe, wPipe, _ := os.Pipe()
+		os.Stdout = wPipe
+
+		req := httptest.NewRequest(http.MethodGet, "/.env", nil)
+		req.RemoteAddr = "10.0.1.1:12345"
+		req.Header.Set("X-Forwarded-For", "203.0.113.199")
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+
+		wPipe.Close()
+		os.Stdout = oldStdout
+
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, rPipe)
+		rPipe.Close()
+
+		var event map[string]interface{}
+		if err := json.Unmarshal(buf.Bytes(), &event); err != nil {
+			t.Fatalf("failed to parse log JSON: %v, raw: %q", err, buf.String())
+		}
+		if event["client_ip"] != "203.0.113.199" {
+			t.Errorf("expected client_ip 203.0.113.199 from trusted proxy, got %v", event["client_ip"])
+		}
+	}
+}
+
+func TestRouteWarden_Redirect_UnsafeSchemes(t *testing.T) {
+	unsafeRedirects := []string{
+		"//attacker.com/evil",
+		"javascript:alert(1)",
+		"ftp://attacker.com",
+		"data:text/html,<html>",
+	}
+
+	for _, u := range unsafeRedirects {
+		cfg := traefik_warden.CreateConfig()
+		cfg.Response = &traefik_warden.ResponseConfig{
+			Mode:        "redirect",
+			RedirectURL: u,
+		}
+
+		next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})
+		_, err := traefik_warden.New(context.Background(), next, cfg, "redirect-test")
+		if err == nil {
+			t.Errorf("expected error for unsafe redirectURL %q, got nil", u)
+		}
+	}
+}
+
 
 
