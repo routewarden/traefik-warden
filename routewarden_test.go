@@ -594,9 +594,11 @@ func TestRouteWarden_SilentDrop(t *testing.T) {
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
 
-	// Since httptest.ResponseRecorder doesn't implement http.Hijacker, it falls back to writing status code with empty body
-	if rr.Code != http.StatusForbidden {
-		t.Errorf("expected status %d, got %d", http.StatusForbidden, rr.Code)
+	// Bug 2 fix: httptest.ResponseRecorder doesn't implement http.Hijacker, so the
+	// silentDrop fallback now returns 200 OK with an empty body instead of leaking
+	// the real block status code (403) to the client.
+	if rr.Code != http.StatusOK {
+		t.Errorf("expected status %d (silent drop fallback), got %d", http.StatusOK, rr.Code)
 	}
 	if rr.Body.Len() > 0 {
 		t.Errorf("expected empty body for silent drop fallback, got %q", rr.Body.String())
@@ -1211,8 +1213,11 @@ func TestRouteWarden_SecurityLog_Toggling(t *testing.T) {
 	reqSilent := httptest.NewRequest(http.MethodGet, "/.env", nil)
 	rrSilent := httptest.NewRecorder()
 	handlerSilent.ServeHTTP(rrSilent, reqSilent)
-	if rrSilent.Code != http.StatusForbidden {
-		t.Errorf("expected 403, got %d", rrSilent.Code)
+	// Bug 2 fix: when TCP hijacking is unavailable (httptest.ResponseRecorder does not
+	// implement http.Hijacker), silentDrop falls back to 200 OK with an empty body
+	// instead of leaking the real block status code to the client.
+	if rrSilent.Code != http.StatusOK {
+		t.Errorf("expected 200 (silent drop fallback), got %d", rrSilent.Code)
 	}
 }
 

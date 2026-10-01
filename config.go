@@ -69,6 +69,11 @@ type Config struct {
 	BlockPatterns              []string        `json:"blockPatterns,omitempty"`
 	AllowPatterns              []string        `json:"allowPatterns,omitempty"`
 	AllowedIPs                []string        `json:"allowedIps,omitempty"`                 // Whitelist of IPs or CIDR subnets exempt from blocking
+	// TrustedProxies lists IPs/CIDRs of upstream proxies (e.g. Traefik, load-balancers) whose
+	// X-Forwarded-For and X-Real-IP headers are trusted when resolving the real client IP.
+	// When empty, XFF is trusted unconditionally (legacy behaviour). When set, only requests
+	// arriving from a listed proxy will have their XFF header honoured; all others use RemoteAddr.
+	TrustedProxies             []string        `json:"trustedProxies,omitempty"`
 	Methods                    []string        `json:"methods,omitempty"`                    // HTTP verbs to inspect (defaults to ["GET"])
 	StatusCode                 int             `json:"statusCode,omitempty"`
 	CustomResponseText         string          `json:"customResponseText,omitempty"`
@@ -91,6 +96,7 @@ func CreateConfig() *Config {
 		BlockPatterns:              []string{},
 		AllowPatterns:              []string{},
 		AllowedIPs:                []string{},
+		TrustedProxies:             []string{},
 		Methods:                    []string{"GET"},
 		StatusCode:                 http.StatusForbidden,
 		CustomResponseText:         "403 Forbidden: Access to sensitive endpoint is blocked",
