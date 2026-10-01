@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="assets/banner.png" alt="RouteWarden Logo" width="640" height="240" />
+  <img src="https://routewarden.github.io/banner.png" alt="RouteWarden Logo" width="640" height="240" />
   <h1>RouteWarden</h1>
   <p><strong>Lightweight Traefik middleware to block sensitive file exposure (.env, .git, backups), neutralize path-evasion tricks, whitelist trusted IPs, and respond cleanly before requests hit your backend.</strong></p>
 </div>
@@ -9,15 +9,15 @@
   <a href="https://github.com/routewarden/traefik-warden/actions/workflows/ci.yml"><img src="https://github.com/routewarden/traefik-warden/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI Status" /></a>
   <a href="https://traefik.io"><img src="https://img.shields.io/badge/Traefik-v2.x%20%7C%20v3.x-24A1C1.svg?logo=traefik&logoColor=white" alt="Traefik Compatibility: v2.x | v3.x" /></a>
   <a href="https://pkg.go.dev/github.com/routewarden/traefik-warden"><img src="https://pkg.go.dev/badge/github.com/routewarden/traefik-warden.svg" alt="Go Reference" /></a>
-  <a href="https://routewarden.github.io/docs/guide/testing"><img src="https://img.shields.io/badge/Coverage-98.4%25-brightgreen.svg" alt="Test Coverage: 98.4%" /></a>
+  <a href="https://routewarden.github.io/guide/testing"><img src="https://img.shields.io/badge/Coverage-98.4%25-brightgreen.svg" alt="Test Coverage: 98.4%" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT" /></a>
-  <a href="https://routewarden.github.io/docs/"><img src="https://img.shields.io/badge/Docs-VitePress%20Wiki-6366f1.svg" alt="Documentation Site" /></a>
+  <a href="https://routewarden.github.io/"><img src="https://img.shields.io/badge/Docs-VitePress%20Wiki-6366f1.svg" alt="Documentation Site" /></a>
 </p>
 
 ---
 
-> **Live Playground**: Test rules, response modes, and bypass behaviors directly in your browser: [https://routewarden.github.io/docs/?playground=open](https://routewarden.github.io/docs/?playground=open)  
-> **Documentation & Guides**: [https://routewarden.github.io/docs/](https://routewarden.github.io/docs/)  
+> **Live Playground**: Test rules, response modes, and bypass behaviors directly in your browser: [https://routewarden.github.io/?playground=open](https://routewarden.github.io/?playground=open)  
+> **Documentation & Guides**: [https://routewarden.github.io/](https://routewarden.github.io/)  
 > **Example Scenarios**: [`examples/`](examples/) (Docker Compose and Kubernetes CRDs)
 
 ---
@@ -66,7 +66,7 @@ services:
       # Attach routewarden globally to entryPoint 'web'
       - "--entrypoints.web.http.middlewares=warden-shield@docker"
       - "--experimental.plugins.routewarden.modulename=github.com/routewarden/traefik-warden"
-      - "--experimental.plugins.routewarden.version=v1.2.1"
+      - "--experimental.plugins.routewarden.version=v1.3.0"
     ports:
       - "80:80"
     volumes:
@@ -117,7 +117,7 @@ experimental:
   plugins:
     routewarden:
       moduleName: github.com/routewarden/traefik-warden
-      version: v1.2.1
+      version: v1.3.0
 ```
 
 #### 2. Dynamic Configuration (`dynamic_conf.yml`)
@@ -179,7 +179,7 @@ http:
 | `response.statusCode` | `int` | `403` | HTTP status code returned to the client (such as `404`, `403`, `401`, or `429`). |
 | `response.body` | `string` | `""` | Custom payload returned in the response body. |
 
-> For the complete list of settings (including Captcha keys, custom HTML templates, and header injection), read the **[Full Configuration Reference](https://routewarden.github.io/docs/reference/configuration)**.  
+> For the complete list of settings (including Captcha keys, custom HTML templates, and header injection), read the **[Full Configuration Reference](https://routewarden.github.io/reference/configuration)**.  
 > **Note on `gzipBomb`**: Use this mode only on verified honeypot paths or endpoints targeted exclusively by bots (such as `/.env` or `/wp-login.php`). Never use it on shared generic routes where normal users or legitimate crawlers might get caught. Always keep `enableDefaultAllowPatterns: true` to avoid blocking `/robots.txt`.
 
 ---
@@ -190,7 +190,7 @@ You can use the official [`rwarden`](https://routewarden.github.io/cli/) CLI too
 
 ```bash
 # Install RouteWarden CLI
-curl -fsSL https://routewarden.github.io/cli/install.sh | bash
+curl -fsSL https://routewarden.github.io/install.sh | bash
 
 # Or run via Docker
 docker run --rm ghcr.io/routewarden/cli:latest version
@@ -220,20 +220,20 @@ For complete documentation on the CLI, installation methods, and options, visit 
 
 For detailed setup instructions, architecture deep dives, and production examples, check the documentation:
 
-- [Interactive Live Playground](https://routewarden.github.io/docs/?playground=open)
-- [Getting Started & Installation](https://routewarden.github.io/docs/guide/getting-started)
-- [Architecture & Request Pipeline](https://routewarden.github.io/docs/guide/architecture)
-- [Local Development & Testing](https://routewarden.github.io/docs/guide/local-deployment)
-- [Testing Architecture & Coverage](https://routewarden.github.io/docs/guide/testing)
-- [Configuration Reference](https://routewarden.github.io/docs/traefik/configuration)
-- [Response Modes & Defense Actions](https://routewarden.github.io/docs/reference/response-modes)
-- [Custom Path Patterns & Regex](https://routewarden.github.io/docs/reference/custom-paths)
-- [Anti-Evasion Engine](https://routewarden.github.io/docs/reference/anti-evasion)
-- [CrowdSec Integration & Auto-Ban](https://routewarden.github.io/docs/examples/crowdsec)
-- [Global EntryPoint Shield Recipe](https://routewarden.github.io/docs/examples/docker-compose-global)
-- [IP & CIDR Whitelisting](https://routewarden.github.io/docs/examples/ip-whitelisting)
-- [Cloudflare Turnstile & hCaptcha](https://routewarden.github.io/docs/examples/captcha)
-- [Kubernetes IngressRoute CRD](https://routewarden.github.io/docs/examples/kubernetes)
+- [Interactive Live Playground](https://routewarden.github.io/?playground=open)
+- [Getting Started & Installation](https://routewarden.github.io/guide/getting-started)
+- [Architecture & Request Pipeline](https://routewarden.github.io/guide/architecture)
+- [Local Development & Testing](https://routewarden.github.io/guide/local-deployment)
+- [Testing Architecture & Coverage](https://routewarden.github.io/guide/testing)
+- [Configuration Reference](https://routewarden.github.io/traefik/configuration)
+- [Response Modes & Defense Actions](https://routewarden.github.io/reference/response-modes)
+- [Custom Path Patterns & Regex](https://routewarden.github.io/reference/custom-paths)
+- [Anti-Evasion Engine](https://routewarden.github.io/reference/anti-evasion)
+- [CrowdSec Integration & Auto-Ban](https://routewarden.github.io/examples/crowdsec)
+- [Global EntryPoint Shield Recipe](https://routewarden.github.io/examples/docker-compose-global)
+- [IP & CIDR Whitelisting](https://routewarden.github.io/examples/ip-whitelisting)
+- [Cloudflare Turnstile & hCaptcha](https://routewarden.github.io/examples/captcha)
+- [Kubernetes IngressRoute CRD](https://routewarden.github.io/examples/kubernetes)
 
 ---
 

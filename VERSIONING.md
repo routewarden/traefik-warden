@@ -10,7 +10,7 @@ The canonical version of RouteWarden is stored in [`version.json`](version.json)
 
 ```json
 {
-  "version": "v1.2.1"
+  "version": "v1.3.0"
 }
 ```
 
@@ -96,6 +96,6 @@ git push origin main --tags
 ## 5. Documentation Repository Coordination
 
 The documentation wiki is maintained in the dedicated repository:  
-👉 [**`github.com/routewarden/docs`**](https://github.com/routewarden/docs) (served at [routewarden.github.io/docs](https://routewarden.github.io/docs/)).
+👉 [**`github.com/routewarden/routewarden.github.io`**](https://github.com/routewarden/routewarden.github.io) (served at [routewarden.github.io](https://routewarden.github.io/)).
 
 When publishing minor or major versions, update the version registry in the docs repository to freeze historical version archives.
