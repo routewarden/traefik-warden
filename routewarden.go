@@ -157,26 +157,36 @@ func (rw *RouteWarden) logSecurityEvent(req *http.Request, matchedTarget string,
 	}
 	clientIP := rw.extractClientIP(req)
 	mode := "text"
+	statusCode := http.StatusForbidden
 	if rw.responseHandler != nil {
 		if rw.responseHandler.silentDrop {
 			mode = "silentDrop"
-		} else if rw.responseHandler.config != nil && rw.responseHandler.config.Mode != "" {
-			mode = rw.responseHandler.config.Mode
+			statusCode = 0
+		} else if rw.responseHandler.config != nil {
+			if rw.responseHandler.config.Mode != "" {
+				mode = rw.responseHandler.config.Mode
+			}
+			if rw.responseHandler.config.StatusCode != 0 {
+				statusCode = rw.responseHandler.config.StatusCode
+			}
 		}
 	}
 
 	event := map[string]interface{}{
-		"type":        "routewarden_block",
-		"timestamp":   time.Now().UTC().Format(time.RFC3339),
-		"plugin":      rw.name,
-		"client_ip":   clientIP,
-		"method":      req.Method,
-		"path":        matchedTarget,
-		"request_uri": req.RequestURI,
-		"pattern":     pattern,
-		"action":      mode,
-		"reason":      reason,
-		"user_agent":  req.UserAgent(),
+		"type":            "routewarden_block",
+		"timestamp":       time.Now().UTC().Format(time.RFC3339),
+		"level":           "warn",
+		"plugin":          rw.name,
+		"client_ip":       clientIP,
+		"method":          req.Method,
+		"path":            matchedTarget,
+		"request_uri":     req.RequestURI,
+		"pattern":         pattern,
+		"matched_pattern": pattern,
+		"action":          mode,
+		"status_code":     statusCode,
+		"reason":          reason,
+		"user_agent":      req.UserAgent(),
 	}
 
 	data, err := json.Marshal(event)
