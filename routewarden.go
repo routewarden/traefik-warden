@@ -38,6 +38,15 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 	if config == nil {
 		config = CreateConfig()
 	}
+	if config.Disable {
+		config.Enabled = false
+	}
+	if config.DisableDefaultPatterns {
+		config.EnableDefaultPatterns = false
+	}
+	if config.DisableDefaultAllowPatterns {
+		config.EnableDefaultAllowPatterns = false
+	}
 
 	methodsMap := make(map[string]struct{})
 	if len(config.Methods) == 0 {

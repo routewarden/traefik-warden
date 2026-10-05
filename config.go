@@ -63,8 +63,11 @@ type ResponseConfig struct {
 // Config holds the plugin configuration.
 type Config struct {
 	Enabled                    bool            `json:"enabled,omitempty"`
+	Disable                    bool            `json:"disable,omitempty"`                    // Compatibility alias for enabled: false
 	EnableDefaultPatterns      bool            `json:"enableDefaultPatterns,omitempty"`
+	DisableDefaultPatterns      bool            `json:"disableDefaultPatterns,omitempty"`      // Compatibility alias for enableDefaultPatterns: false
 	EnableDefaultAllowPatterns bool            `json:"enableDefaultAllowPatterns,omitempty"` // Controls built-in whitelist (robots.txt, sitemap.xml, .well-known)
+	DisableDefaultAllowPatterns bool            `json:"disableDefaultAllowPatterns,omitempty"` // Compatibility alias for enableDefaultAllowPatterns: false
 	PathPatterns               []string        `json:"pathPatterns,omitempty"`              // Synonym for blockPatterns
 	BlockPatterns              []string        `json:"blockPatterns,omitempty"`
 	AllowPatterns              []string        `json:"allowPatterns,omitempty"`
