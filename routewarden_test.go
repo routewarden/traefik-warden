@@ -1437,13 +1437,13 @@ func TestRouteWarden_CheckBody(t *testing.T) {
 		t.Errorf("expected 403 for grant_type=password, got %d", recLogin.Code)
 	}
 
-	// 2. Allowed: grant_type=send_access_token
-	sendPayload := "grant_type=send_access_token&send_id=abc&password=pwd"
+	// 2. Allowed: grant_type=send_access
+	sendPayload := "grant_type=send_access&send_id=abc&password=pwd"
 	reqSend := httptest.NewRequest(http.MethodPost, "/identity/connect/token", strings.NewReader(sendPayload))
 	recSend := httptest.NewRecorder()
 	handler.ServeHTTP(recSend, reqSend)
 	if recSend.Code != http.StatusOK {
-		t.Errorf("expected 200 for grant_type=send_access_token, got %d", recSend.Code)
+		t.Errorf("expected 200 for grant_type=send_access, got %d", recSend.Code)
 	}
 	if downstreamRead != sendPayload {
 		t.Errorf("expected downstream to read %q, got %q", sendPayload, downstreamRead)
