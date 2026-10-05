@@ -1407,5 +1407,49 @@ func TestRouteWarden_Redirect_UnsafeSchemes(t *testing.T) {
 	}
 }
 
+func TestRouteWarden_CheckBody(t *testing.T) {
+	cfg := traefik_warden.CreateConfig()
+	cfg.EnableDefaultPatterns = false
+	cfg.Methods = []string{"POST"}
+	cfg.CheckBody = true
+	cfg.CheckBodyPatterns = []string{"(?i)grant_type=password"}
+
+	var downstreamRead string
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("failed to read body in downstream: %v", err)
+		}
+		downstreamRead = string(b)
+		w.WriteHeader(http.StatusOK)
+	})
+
+	handler, err := traefik_warden.New(context.Background(), next, cfg, "body-test")
+	if err != nil {
+		t.Fatalf("failed to init plugin: %v", err)
+	}
+
+	// 1. Blocked: grant_type=password
+	reqLogin := httptest.NewRequest(http.MethodPost, "/identity/connect/token", strings.NewReader("grant_type=password&username=admin&password=123"))
+	recLogin := httptest.NewRecorder()
+	handler.ServeHTTP(recLogin, reqLogin)
+	if recLogin.Code != http.StatusForbidden {
+		t.Errorf("expected 403 for grant_type=password, got %d", recLogin.Code)
+	}
+
+	// 2. Allowed: grant_type=send_access_token
+	sendPayload := "grant_type=send_access_token&send_id=abc&password=pwd"
+	reqSend := httptest.NewRequest(http.MethodPost, "/identity/connect/token", strings.NewReader(sendPayload))
+	recSend := httptest.NewRecorder()
+	handler.ServeHTTP(recSend, reqSend)
+	if recSend.Code != http.StatusOK {
+		t.Errorf("expected 200 for grant_type=send_access_token, got %d", recSend.Code)
+	}
+	if downstreamRead != sendPayload {
+		t.Errorf("expected downstream to read %q, got %q", sendPayload, downstreamRead)
+	}
+}
+
+
 
 

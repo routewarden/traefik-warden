@@ -81,6 +81,9 @@ type Config struct {
 	Mode                       string          `json:"mode,omitempty"`                       // Convenience alias for response mode
 	CheckQuery                 bool            `json:"checkQuery,omitempty"`
 	CheckHeaders               []string        `json:"checkHeaders,omitempty"`               // Optional headers to inspect (e.g. X-Forwarded-Uri, X-Rewrite-URL)
+	CheckBody                  bool            `json:"checkBody,omitempty"`                  // Enable inspecting incoming request bodies
+	CheckBodyMaxBytes          int64           `json:"checkBodyMaxBytes,omitempty"`          // Max body bytes to buffer and inspect (default: 65536)
+	CheckBodyPatterns          []string        `json:"checkBodyPatterns,omitempty"`          // Specific regex patterns to match against request body
 	Debug                      bool            `json:"debug,omitempty"`                      // Enable verbose debug logging to stdout/stderr
 	SecurityLog                bool            `json:"securityLog,omitempty"`                // Emit structured JSON security audit events (CrowdSec/SIEM compatible) on block
 	Response                   *ResponseConfig `json:"response,omitempty"`

@@ -1,9 +1,11 @@
 package traefik_warden
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -14,18 +16,21 @@ import (
 
 // RouteWarden is the Traefik middleware plugin handler.
 type RouteWarden struct {
-	next            http.Handler
-	name            string
-	enabled         bool
-	debug           bool
-	securityLog     bool
-	methods         map[string]struct{}
-	blockRegexes    []*regexp.Regexp
-	allowRegexes    []*regexp.Regexp
-	ipFilter        *IPFilter
-	checkQuery      bool
-	checkHeaders    []string
-	responseHandler *ResponseHandler
+	next              http.Handler
+	name              string
+	enabled           bool
+	debug             bool
+	securityLog       bool
+	methods           map[string]struct{}
+	blockRegexes      []*regexp.Regexp
+	allowRegexes      []*regexp.Regexp
+	bodyRegexes       []*regexp.Regexp
+	ipFilter          *IPFilter
+	checkQuery        bool
+	checkHeaders      []string
+	checkBody         bool
+	checkBodyMaxBytes int64
+	responseHandler   *ResponseHandler
 }
 
 // New creates a new RouteWarden plugin handler.
@@ -115,19 +120,39 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		}
 	}
 
+	compiledBodyRegexes := make([]*regexp.Regexp, 0, len(config.CheckBodyPatterns))
+	for _, p := range config.CheckBodyPatterns {
+		if strings.TrimSpace(p) == "" {
+			continue
+		}
+		re, err := regexp.Compile(p)
+		if err != nil {
+			return nil, fmt.Errorf("routewarden [%s]: invalid check body regex pattern %q: %w", name, p, err)
+		}
+		compiledBodyRegexes = append(compiledBodyRegexes, re)
+	}
+
+	bodyMaxBytes := config.CheckBodyMaxBytes
+	if bodyMaxBytes <= 0 {
+		bodyMaxBytes = 64 * 1024
+	}
+
 	rw := &RouteWarden{
-		next:            next,
-		name:            name,
-		enabled:         config.Enabled,
-		debug:           config.Debug,
-		securityLog:     config.SecurityLog,
-		methods:         methodsMap,
-		blockRegexes:    compiledBlockRegexes,
-		allowRegexes:    compiledAllowRegexes,
-		ipFilter:        ipFilter,
-		checkQuery:      config.CheckQuery,
-		checkHeaders:    cleanedHeaders,
-		responseHandler: respHandler,
+		next:              next,
+		name:              name,
+		enabled:           config.Enabled,
+		debug:             config.Debug,
+		securityLog:       config.SecurityLog,
+		methods:           methodsMap,
+		blockRegexes:      compiledBlockRegexes,
+		allowRegexes:      compiledAllowRegexes,
+		bodyRegexes:       compiledBodyRegexes,
+		ipFilter:          ipFilter,
+		checkQuery:        config.CheckQuery,
+		checkHeaders:      cleanedHeaders,
+		checkBody:         config.CheckBody || len(compiledBodyRegexes) > 0,
+		checkBodyMaxBytes: bodyMaxBytes,
+		responseHandler:   respHandler,
 	}
 
 	rw.logDebug("initialized (enabled=%t, debug=%t, securityLog=%t, blockPatterns=%d, allowPatterns=%d, allowedIPs=%d, mode=%s)",
@@ -303,6 +328,44 @@ func (rw *RouteWarden) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 					return
 				}
 			}
+		}
+	}
+
+	// 5. Optional: Check Request Body if enabled
+	if rw.checkBody && req.Body != nil {
+		maxBytes := rw.checkBodyMaxBytes
+		if maxBytes <= 0 {
+			maxBytes = 64 * 1024
+		}
+
+		bodyBytes, err := io.ReadAll(io.LimitReader(req.Body, maxBytes))
+		if err == nil && len(bodyBytes) > 0 {
+			req.Body = io.NopCloser(io.MultiReader(bytes.NewReader(bodyBytes), req.Body))
+
+			bodyStr := string(bodyBytes)
+			unescapedBody, unerr := url.QueryUnescape(bodyStr)
+			if unerr != nil {
+				unescapedBody = bodyStr
+			}
+
+			bodyCandidates := []string{bodyStr, unescapedBody}
+			patternsToCheck := rw.bodyRegexes
+			if len(patternsToCheck) == 0 {
+				patternsToCheck = rw.blockRegexes
+			}
+
+			for _, bc := range bodyCandidates {
+				for _, re := range patternsToCheck {
+					if re.MatchString(bc) {
+						rw.logDebug("body payload blocked by pattern %q", re.String())
+						rw.logSecurityEvent(req, "[body payload]", re.String(), "body_blocked")
+						rw.responseHandler.ServeBlockedRequest(w, req)
+						return
+					}
+				}
+			}
+		} else if req.Body != nil {
+			req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 		}
 	}
 
