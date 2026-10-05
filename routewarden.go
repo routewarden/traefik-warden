@@ -335,9 +335,13 @@ func (rw *RouteWarden) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			maxBytes = 64 * 1024
 		}
 
-		bodyBytes, err := io.ReadAll(io.LimitReader(req.Body, maxBytes))
+		origBody := req.Body
+		bodyBytes, err := io.ReadAll(io.LimitReader(origBody, maxBytes))
 		if err == nil && len(bodyBytes) > 0 {
-			req.Body = io.NopCloser(io.MultiReader(bytes.NewReader(bodyBytes), req.Body))
+			req.Body = &bodyReadCloser{
+				Reader: io.MultiReader(bytes.NewReader(bodyBytes), origBody),
+				Closer: origBody,
+			}
 
 			bodyStr := string(bodyBytes)
 			unescapedBody, unerr := url.QueryUnescape(bodyStr)
@@ -361,8 +365,11 @@ func (rw *RouteWarden) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 					}
 				}
 			}
-		} else if req.Body != nil {
-			req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+		} else if origBody != nil {
+			req.Body = &bodyReadCloser{
+				Reader: bytes.NewReader(bodyBytes),
+				Closer: origBody,
+			}
 		}
 	}
 
@@ -387,3 +394,18 @@ func (rw *RouteWarden) findMatchingBlock(target string) *regexp.Regexp {
 	}
 	return nil
 }
+
+// bodyReadCloser combines an io.Reader and io.Closer to preserve the underlying
+// connection/body closer when request bodies are buffered and replayed.
+type bodyReadCloser struct {
+	io.Reader
+	io.Closer
+}
+
+func (b *bodyReadCloser) Close() error {
+	if b.Closer != nil {
+		return b.Closer.Close()
+	}
+	return nil
+}
+

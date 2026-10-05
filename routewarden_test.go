@@ -1448,7 +1448,31 @@ func TestRouteWarden_CheckBody(t *testing.T) {
 	if downstreamRead != sendPayload {
 		t.Errorf("expected downstream to read %q, got %q", sendPayload, downstreamRead)
 	}
+
+	// 3. Verify closing req.Body invokes underlying closer
+	closed := false
+	customClose := &testBodyCloser{Reader: strings.NewReader(sendPayload), onClose: func() { closed = true }}
+	reqCloser := httptest.NewRequest(http.MethodPost, "/test", customClose)
+	recCloser := httptest.NewRecorder()
+	handler.ServeHTTP(recCloser, reqCloser)
+	_ = reqCloser.Body.Close()
+	if !closed {
+		t.Errorf("expected underlying request body closer to be called")
+	}
 }
+
+type testBodyCloser struct {
+	io.Reader
+	onClose func()
+}
+
+func (tc *testBodyCloser) Close() error {
+	if tc.onClose != nil {
+		tc.onClose()
+	}
+	return nil
+}
+
 
 
 
