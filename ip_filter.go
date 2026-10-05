@@ -27,7 +27,7 @@ func NewIPFilter(allowedIPs []string, trustedProxies []string) (*IPFilter, error
 	var nets []*net.IPNet
 
 	for _, ipStr := range allowedIPs {
-		ipStr = strings.TrimSpace(ipStr)
+		ipStr = cleanIP(ipStr)
 		if ipStr == "" {
 			continue
 		}
@@ -48,7 +48,7 @@ func NewIPFilter(allowedIPs []string, trustedProxies []string) (*IPFilter, error
 
 	var trustedNets []*net.IPNet
 	for _, proxyStr := range trustedProxies {
-		proxyStr = strings.TrimSpace(proxyStr)
+		proxyStr = cleanIP(proxyStr)
 		if proxyStr == "" {
 			continue
 		}
@@ -191,6 +191,14 @@ func ExtractClientIP(req *http.Request) string {
 
 func cleanIP(raw string) string {
 	raw = strings.TrimSpace(raw)
+	if slash := strings.IndexByte(raw, '/'); slash != -1 {
+		ipPart := cleanIP(raw[:slash])
+		maskPart := strings.TrimSpace(raw[slash+1:])
+		if ipPart == "" {
+			return ""
+		}
+		return ipPart + "/" + maskPart
+	}
 	if host, _, err := net.SplitHostPort(raw); err == nil {
 		raw = host
 	}
