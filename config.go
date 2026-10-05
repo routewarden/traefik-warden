@@ -63,12 +63,8 @@ type ResponseConfig struct {
 // Config holds the plugin configuration.
 type Config struct {
 	Enabled                    bool            `json:"enabled,omitempty"`
-	Disable                    bool            `json:"disable,omitempty"`                    // Compatibility alias for enabled: false
 	EnableDefaultPatterns      bool            `json:"enableDefaultPatterns,omitempty"`
-	DisableDefaultPatterns      bool            `json:"disableDefaultPatterns,omitempty"`      // Compatibility alias for enableDefaultPatterns: false
 	EnableDefaultAllowPatterns bool            `json:"enableDefaultAllowPatterns,omitempty"` // Controls built-in whitelist (robots.txt, sitemap.xml, .well-known)
-	DisableDefaultAllowPatterns bool            `json:"disableDefaultAllowPatterns,omitempty"` // Compatibility alias for enableDefaultAllowPatterns: false
-	PathPatterns               []string        `json:"pathPatterns,omitempty"`              // Synonym for blockPatterns
 	BlockPatterns              []string        `json:"blockPatterns,omitempty"`
 	AllowPatterns              []string        `json:"allowPatterns,omitempty"`
 	AllowedIPs                []string        `json:"allowedIps,omitempty"`                 // Whitelist of IPs or CIDR subnets exempt from blocking
@@ -80,7 +76,6 @@ type Config struct {
 	Methods                    []string        `json:"methods,omitempty"`                    // HTTP verbs to inspect (defaults to ["GET"])
 	StatusCode                 int             `json:"statusCode,omitempty"`
 	CustomResponseText         string          `json:"customResponseText,omitempty"`
-	Action                     string          `json:"action,omitempty"`                     // Convenience alias for response mode (e.g. "silentDrop", "fakeSuccess", "json")
 	Mode                       string          `json:"mode,omitempty"`                       // Convenience alias for response mode
 	CheckQuery                 bool            `json:"checkQuery,omitempty"`
 	CheckHeaders               []string        `json:"checkHeaders,omitempty"`               // Optional headers to inspect (e.g. X-Forwarded-Uri, X-Rewrite-URL)
@@ -98,7 +93,6 @@ func CreateConfig() *Config {
 		Enabled:                    true,
 		EnableDefaultPatterns:      true,
 		EnableDefaultAllowPatterns: true,
-		PathPatterns:               []string{},
 		BlockPatterns:              []string{},
 		AllowPatterns:              []string{},
 		AllowedIPs:                []string{},
@@ -106,7 +100,6 @@ func CreateConfig() *Config {
 		Methods:                    []string{"GET"},
 		StatusCode:                 http.StatusForbidden,
 		CustomResponseText:         "403 Forbidden: Access to sensitive endpoint is blocked",
-		Action:                     "",
 		Mode:                       "",
 		CheckQuery:                 false,
 		CheckHeaders:               []string{},

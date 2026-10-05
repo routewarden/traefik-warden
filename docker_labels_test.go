@@ -148,13 +148,6 @@ func TestTraefikDockerLabels_FakeSuccess(t *testing.T) {
 				"mode": "fakeSuccess"
 			}`,
 		},
-		{
-			name: "top-level action alias",
-			labelJSON: `{
-				"enabled": true,
-				"action": "fakeSuccess"
-			}`,
-		},
 	}
 
 	for _, tc := range testCases {
@@ -232,7 +225,7 @@ func TestTraefikDockerLabels_AllResponseModes(t *testing.T) {
 			name: "rateLimit mode",
 			labelJSON: `{
 				"enabled": true,
-				"action": "rateLimit",
+				"mode": "rateLimit",
 				"response": { "retryAfterSeconds": 120 }
 			}`,
 			expectedStatus: http.StatusTooManyRequests,

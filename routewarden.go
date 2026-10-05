@@ -38,15 +38,6 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 	if config == nil {
 		config = CreateConfig()
 	}
-	if config.Disable {
-		config.Enabled = false
-	}
-	if config.DisableDefaultPatterns {
-		config.EnableDefaultPatterns = false
-	}
-	if config.DisableDefaultAllowPatterns {
-		config.EnableDefaultAllowPatterns = false
-	}
 
 	methodsMap := make(map[string]struct{})
 	if len(config.Methods) == 0 {
@@ -67,7 +58,6 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 	if config.EnableDefaultPatterns {
 		blockPatterns = append(blockPatterns, DefaultBlockPatterns...)
 	}
-	blockPatterns = append(blockPatterns, config.PathPatterns...)
 	blockPatterns = append(blockPatterns, config.BlockPatterns...)
 
 	compiledBlockRegexes := make([]*regexp.Regexp, 0, len(blockPatterns))
@@ -111,8 +101,6 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 	}
 	if strings.TrimSpace(config.Mode) != "" {
 		respConfig.Mode = strings.TrimSpace(config.Mode)
-	} else if strings.TrimSpace(config.Action) != "" {
-		respConfig.Mode = strings.TrimSpace(config.Action)
 	}
 
 	isSilentDrop := strings.EqualFold(respConfig.Mode, "silentdrop") || strings.EqualFold(respConfig.Mode, "silent_drop") || strings.EqualFold(respConfig.Mode, "drop")

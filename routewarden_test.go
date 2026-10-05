@@ -147,7 +147,7 @@ func TestRouteWarden_CustomBlockPatterns(t *testing.T) {
 
 func TestRouteWarden_JSONResponse(t *testing.T) {
 	cfg := traefik_warden.CreateConfig()
-	cfg.PathPatterns = []string{`^/api/admin/.*`}
+	cfg.BlockPatterns = []string{`^/api/admin/.*`}
 	cfg.Response = &traefik_warden.ResponseConfig{
 		Mode:       "json",
 		StatusCode: http.StatusTeapot, // 418 or 403 / 429
@@ -191,7 +191,7 @@ func TestRouteWarden_JSONResponse(t *testing.T) {
 
 func TestRouteWarden_HTMLResponse(t *testing.T) {
 	cfg := traefik_warden.CreateConfig()
-	cfg.PathPatterns = []string{`(?i)^/admin/login`}
+	cfg.BlockPatterns = []string{`(?i)^/admin/login`}
 	cfg.Response = &traefik_warden.ResponseConfig{
 		Mode:       "html",
 		StatusCode: http.StatusForbidden,
@@ -239,7 +239,7 @@ func TestRouteWarden_CaptchaResponse(t *testing.T) {
 	for _, p := range providers {
 		t.Run(p.provider, func(t *testing.T) {
 			cfg := traefik_warden.CreateConfig()
-			cfg.PathPatterns = []string{`^/login`}
+			cfg.BlockPatterns = []string{`^/login`}
 			cfg.Response = &traefik_warden.ResponseConfig{
 				Mode:       "captcha",
 				StatusCode: http.StatusForbidden,
@@ -280,7 +280,7 @@ func TestRouteWarden_CaptchaResponse(t *testing.T) {
 
 func TestRouteWarden_RedirectResponse(t *testing.T) {
 	cfg := traefik_warden.CreateConfig()
-	cfg.PathPatterns = []string{`^/trap`}
+	cfg.BlockPatterns = []string{`^/trap`}
 	cfg.Response = &traefik_warden.ResponseConfig{
 		Mode:        "redirect",
 		StatusCode:  http.StatusTemporaryRedirect, // 307
@@ -316,7 +316,7 @@ func TestRouteWarden_AllowPatternsOverride(t *testing.T) {
 		cfg := traefik_warden.CreateConfig()
 		cfg.EnableDefaultPatterns = true
 		cfg.EnableDefaultAllowPatterns = true
-		cfg.PathPatterns = []string{`(?i)^/api/.*$`}
+		cfg.BlockPatterns = []string{`(?i)^/api/.*$`}
 		cfg.AllowPatterns = []string{
 			`(?i)^/api/public/.*\.env$`,
 			`(?i)^/public/.*\.txt$`,
@@ -398,7 +398,7 @@ func TestRouteWarden_DisableDefaultAllowPatterns(t *testing.T) {
 	cfg := traefik_warden.CreateConfig()
 	cfg.EnableDefaultAllowPatterns = false
 	// Block all .txt files
-	cfg.PathPatterns = []string{`(?i).*\.txt$`}
+	cfg.BlockPatterns = []string{`(?i).*\.txt$`}
 
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -718,7 +718,7 @@ func TestRouteWarden_WildcardAndPrefixPatterns(t *testing.T) {
 	cfg := traefik_warden.CreateConfig()
 	cfg.EnableDefaultPatterns = false
 	// Real-world API wildcard and prefix patterns (like Immich, admin dashboards, etc.)
-	cfg.PathPatterns = []string{
+	cfg.BlockPatterns = []string{
 		`(?i)^/api/auth/login.*$`,
 		`(?i)^/api/auth/admin-sign-up.*$`,
 		`(?i)^/api/users.*$`,
@@ -1082,7 +1082,7 @@ func TestRouteWarden_EmptyPatternStrings(t *testing.T) {
 
 	cfg := traefik_warden.CreateConfig()
 	cfg.EnableDefaultPatterns = false
-	cfg.PathPatterns = []string{"", "   ", `(?i)^/secret$`, ""}
+	cfg.BlockPatterns = []string{"", "   ", `(?i)^/secret$`, ""}
 	cfg.AllowPatterns = []string{"", "  ", `(?i)^/secret/allowed$`, ""}
 
 	handler, err := traefik_warden.New(context.Background(), next, cfg, "empty-pattern-test")
