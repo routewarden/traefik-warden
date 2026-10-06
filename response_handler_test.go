@@ -971,4 +971,47 @@ func TestResponseHandler_ClientDisconnect_Streams(t *testing.T) {
 	handlerTarpit.ServeBlockedRequest(errWriterTarpit, req)
 }
 
+func TestResponseHandler_Proxy_UnsafeSchemes(t *testing.T) {
+	unsafeURLs := []string{
+		"javascript:alert(1)",
+		"data:text/plain,hello",
+		"ftp://attacker.com/sink",
+		"file:///etc/passwd",
+	}
+
+	for _, u := range unsafeURLs {
+		_, err := traefik_warden.NewResponseHandler(&traefik_warden.ResponseConfig{
+			Mode:     "proxy",
+			ProxyURL: u,
+		}, 0, "", false)
+		if err == nil {
+			t.Errorf("expected error for unsafe proxyUrl %q, got nil", u)
+		}
+	}
+}
+
+func TestResponseHandler_CRLF_Headers(t *testing.T) {
+	h, err := traefik_warden.NewResponseHandler(&traefik_warden.ResponseConfig{
+		Mode: "text",
+		Headers: map[string]string{
+			"X-Injected\r\nHeader": "val\r\nSet-Cookie: evil=1",
+		},
+	}, 0, "", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	rr := httptest.NewRecorder()
+	h.ServeBlockedRequest(rr, req)
+
+	if rr.Header().Get("X-InjectedHeader") != "valSet-Cookie: evil=1" {
+		t.Errorf("expected sanitized header, got: %q", rr.Header().Get("X-InjectedHeader"))
+	}
+	if rr.Header().Get("X-Injected\r\nHeader") != "" {
+		t.Errorf("expected raw CRLF header to be omitted")
+	}
+}
+
+
 

@@ -39,6 +39,13 @@ func TestIPFilter_Unit(t *testing.T) {
 		t.Errorf("expected 2001:db8::1 in 2001:db8::/32 to be allowed")
 	}
 
+	// 3b. IPv6 with link-local zone identifier
+	req3b := httptest.NewRequest(http.MethodGet, "/", nil)
+	req3b.RemoteAddr = "[2001:db8::1%eth0]:5678"
+	if !filter.IsAllowed(req3b) {
+		t.Errorf("expected 2001:db8::1%%eth0 to be allowed")
+	}
+
 	// 4. X-Forwarded-For header match
 	req4 := httptest.NewRequest(http.MethodGet, "/", nil)
 	req4.RemoteAddr = "203.0.113.1:80"

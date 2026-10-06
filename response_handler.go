@@ -186,6 +186,9 @@ func NewResponseHandler(respCfg *ResponseConfig, topStatusCode int, topCustomTex
 		if err != nil {
 			return nil, fmt.Errorf("invalid proxyUrl %q: %w", respCfg.ProxyURL, err)
 		}
+		if targetURL.Scheme != "http" && targetURL.Scheme != "https" {
+			return nil, fmt.Errorf("unsafe proxyUrl %q: scheme must be http or https", respCfg.ProxyURL)
+		}
 		proxyHandler = httputil.NewSingleHostReverseProxy(targetURL)
 	}
 
@@ -230,9 +233,13 @@ func (h *ResponseHandler) ServeBlockedRequest(w http.ResponseWriter, req *http.R
 		return
 	}
 
-	// Apply custom headers
+	// Apply custom headers (sanitized against CRLF injection)
 	for k, v := range h.config.Headers {
-		w.Header().Set(k, v)
+		cleanK := strings.ReplaceAll(strings.ReplaceAll(k, "\r", ""), "\n", "")
+		cleanV := strings.ReplaceAll(strings.ReplaceAll(v, "\r", ""), "\n", "")
+		if cleanK != "" {
+			w.Header().Set(cleanK, cleanV)
+		}
 	}
 
 	switch strings.ToLower(h.config.Mode) {
