@@ -990,4 +990,28 @@ func TestResponseHandler_Proxy_UnsafeSchemes(t *testing.T) {
 	}
 }
 
+func TestResponseHandler_CRLF_Headers(t *testing.T) {
+	h, err := traefik_warden.NewResponseHandler(&traefik_warden.ResponseConfig{
+		Mode: "text",
+		Headers: map[string]string{
+			"X-Injected\r\nHeader": "val\r\nSet-Cookie: evil=1",
+		},
+	}, 0, "", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	rr := httptest.NewRecorder()
+	h.ServeBlockedRequest(rr, req)
+
+	if rr.Header().Get("X-InjectedHeader") != "valSet-Cookie: evil=1" {
+		t.Errorf("expected sanitized header, got: %q", rr.Header().Get("X-InjectedHeader"))
+	}
+	if rr.Header().Get("X-Injected\r\nHeader") != "" {
+		t.Errorf("expected raw CRLF header to be omitted")
+	}
+}
+
+
 
