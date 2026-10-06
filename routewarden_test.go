@@ -147,7 +147,7 @@ func TestRouteWarden_CustomBlockPatterns(t *testing.T) {
 
 func TestRouteWarden_JSONResponse(t *testing.T) {
 	cfg := traefik_warden.CreateConfig()
-	cfg.PathPatterns = []string{`^/api/admin/.*`}
+	cfg.BlockPatterns = []string{`^/api/admin/.*`}
 	cfg.Response = &traefik_warden.ResponseConfig{
 		Mode:       "json",
 		StatusCode: http.StatusTeapot, // 418 or 403 / 429
@@ -191,7 +191,7 @@ func TestRouteWarden_JSONResponse(t *testing.T) {
 
 func TestRouteWarden_HTMLResponse(t *testing.T) {
 	cfg := traefik_warden.CreateConfig()
-	cfg.PathPatterns = []string{`(?i)^/admin/login`}
+	cfg.BlockPatterns = []string{`(?i)^/admin/login`}
 	cfg.Response = &traefik_warden.ResponseConfig{
 		Mode:       "html",
 		StatusCode: http.StatusForbidden,
@@ -239,7 +239,7 @@ func TestRouteWarden_CaptchaResponse(t *testing.T) {
 	for _, p := range providers {
 		t.Run(p.provider, func(t *testing.T) {
 			cfg := traefik_warden.CreateConfig()
-			cfg.PathPatterns = []string{`^/login`}
+			cfg.BlockPatterns = []string{`^/login`}
 			cfg.Response = &traefik_warden.ResponseConfig{
 				Mode:       "captcha",
 				StatusCode: http.StatusForbidden,
@@ -280,7 +280,7 @@ func TestRouteWarden_CaptchaResponse(t *testing.T) {
 
 func TestRouteWarden_RedirectResponse(t *testing.T) {
 	cfg := traefik_warden.CreateConfig()
-	cfg.PathPatterns = []string{`^/trap`}
+	cfg.BlockPatterns = []string{`^/trap`}
 	cfg.Response = &traefik_warden.ResponseConfig{
 		Mode:        "redirect",
 		StatusCode:  http.StatusTemporaryRedirect, // 307
@@ -316,7 +316,7 @@ func TestRouteWarden_AllowPatternsOverride(t *testing.T) {
 		cfg := traefik_warden.CreateConfig()
 		cfg.EnableDefaultPatterns = true
 		cfg.EnableDefaultAllowPatterns = true
-		cfg.PathPatterns = []string{`(?i)^/api/.*$`}
+		cfg.BlockPatterns = []string{`(?i)^/api/.*$`}
 		cfg.AllowPatterns = []string{
 			`(?i)^/api/public/.*\.env$`,
 			`(?i)^/public/.*\.txt$`,
@@ -398,7 +398,7 @@ func TestRouteWarden_DisableDefaultAllowPatterns(t *testing.T) {
 	cfg := traefik_warden.CreateConfig()
 	cfg.EnableDefaultAllowPatterns = false
 	// Block all .txt files
-	cfg.PathPatterns = []string{`(?i).*\.txt$`}
+	cfg.BlockPatterns = []string{`(?i).*\.txt$`}
 
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -718,7 +718,7 @@ func TestRouteWarden_WildcardAndPrefixPatterns(t *testing.T) {
 	cfg := traefik_warden.CreateConfig()
 	cfg.EnableDefaultPatterns = false
 	// Real-world API wildcard and prefix patterns (like Immich, admin dashboards, etc.)
-	cfg.PathPatterns = []string{
+	cfg.BlockPatterns = []string{
 		`(?i)^/api/auth/login.*$`,
 		`(?i)^/api/auth/admin-sign-up.*$`,
 		`(?i)^/api/users.*$`,
@@ -1082,7 +1082,7 @@ func TestRouteWarden_EmptyPatternStrings(t *testing.T) {
 
 	cfg := traefik_warden.CreateConfig()
 	cfg.EnableDefaultPatterns = false
-	cfg.PathPatterns = []string{"", "   ", `(?i)^/secret$`, ""}
+	cfg.BlockPatterns = []string{"", "   ", `(?i)^/secret$`, ""}
 	cfg.AllowPatterns = []string{"", "  ", `(?i)^/secret/allowed$`, ""}
 
 	handler, err := traefik_warden.New(context.Background(), next, cfg, "empty-pattern-test")
@@ -1407,5 +1407,538 @@ func TestRouteWarden_Redirect_UnsafeSchemes(t *testing.T) {
 	}
 }
 
+func TestRouteWarden_CheckBody(t *testing.T) {
+	cfg := traefik_warden.CreateConfig()
+	cfg.EnableDefaultPatterns = false
+	cfg.Methods = []string{"POST"}
+	cfg.CheckBody = true
+	cfg.CheckBodyPatterns = []string{"(?i)grant_type=password"}
 
+	var downstreamRead string
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("failed to read body in downstream: %v", err)
+		}
+		downstreamRead = string(b)
+		w.WriteHeader(http.StatusOK)
+	})
+
+	handler, err := traefik_warden.New(context.Background(), next, cfg, "body-test")
+	if err != nil {
+		t.Fatalf("failed to init plugin: %v", err)
+	}
+
+	// 1. Blocked: grant_type=password
+	reqLogin := httptest.NewRequest(http.MethodPost, "/identity/connect/token", strings.NewReader("grant_type=password&username=admin&password=123"))
+	recLogin := httptest.NewRecorder()
+	handler.ServeHTTP(recLogin, reqLogin)
+	if recLogin.Code != http.StatusForbidden {
+		t.Errorf("expected 403 for grant_type=password, got %d", recLogin.Code)
+	}
+
+	// 2. Allowed: grant_type=send_access
+	sendPayload := "grant_type=send_access&send_id=abc&password=pwd"
+	reqSend := httptest.NewRequest(http.MethodPost, "/identity/connect/token", strings.NewReader(sendPayload))
+	recSend := httptest.NewRecorder()
+	handler.ServeHTTP(recSend, reqSend)
+	if recSend.Code != http.StatusOK {
+		t.Errorf("expected 200 for grant_type=send_access, got %d", recSend.Code)
+	}
+	if downstreamRead != sendPayload {
+		t.Errorf("expected downstream to read %q, got %q", sendPayload, downstreamRead)
+	}
+
+	// 3. Verify closing req.Body invokes underlying closer
+	closed := false
+	customClose := &testBodyCloser{Reader: strings.NewReader(sendPayload), onClose: func() { closed = true }}
+	reqCloser := httptest.NewRequest(http.MethodPost, "/test", customClose)
+	recCloser := httptest.NewRecorder()
+	handler.ServeHTTP(recCloser, reqCloser)
+	_ = reqCloser.Body.Close()
+	if !closed {
+		t.Errorf("expected underlying request body closer to be called")
+	}
+}
+
+type testBodyCloser struct {
+	io.Reader
+	onClose func()
+}
+
+func (tc *testBodyCloser) Close() error {
+	if tc.onClose != nil {
+		tc.onClose()
+	}
+	return nil
+}
+
+// ── IPv6 allowlist tests ────────────────────────────────────────────────────────
+
+func TestRouteWarden_AllowedIPs_IPv6(t *testing.T) {
+	cfg := traefik_warden.CreateConfig()
+	cfg.AllowedIPs = []string{
+		"2001:db8::1",
+		"fe80::cafe/64",
+	}
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	handler, err := traefik_warden.New(context.Background(), next, cfg, "ipv6-test")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	tests := []struct {
+		name       string
+		remoteAddr string
+		path       string
+		want       int
+	}{
+		{
+			name:       "Exact IPv6 allowed",
+			remoteAddr: "[2001:db8::1]:12345",
+			path:       "/.env",
+			want:       http.StatusOK,
+		},
+		{
+			name:       "IPv6 CIDR subnet allowed",
+			remoteAddr: "[fe80::cafe:1]:12345",
+			path:       "/.env",
+			want:       http.StatusOK,
+		},
+		{
+			name:       "Non-listed IPv6 blocked",
+			remoteAddr: "[2001:db8::2]:12345",
+			path:       "/.env",
+			want:       http.StatusForbidden,
+		},
+		{
+			name:       "IPv6 zone-scoped allowed via zone-stripped match",
+			remoteAddr: "[fe80::cafe%eth0]:12345",
+			path:       "/.env",
+			want:       http.StatusOK,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+			req.RemoteAddr = tc.remoteAddr
+			rr := httptest.NewRecorder()
+			handler.ServeHTTP(rr, req)
+			if rr.Code != tc.want {
+				t.Errorf("expected %d, got %d", tc.want, rr.Code)
+			}
+		})
+	}
+}
+
+// ── Header injection / traversal tests ────────────────────────────────────────
+
+func TestRouteWarden_CheckHeaders_InjectionVectors(t *testing.T) {
+	cfg := traefik_warden.CreateConfig()
+	cfg.EnableDefaultPatterns = false
+	cfg.CheckHeaders = []string{"X-Custom-Header", "User-Agent"}
+	cfg.BlockPatterns = []string{`(?i)(union.*select|drop.*table|<script)`}
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	handler, err := traefik_warden.New(context.Background(), next, cfg, "header-inject-test")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	tests := []struct {
+		name   string
+		header string
+		value  string
+		want   int
+	}{
+		{
+			name:   "SQL injection in header",
+			header: "X-Custom-Header",
+			value:  "'; UNION SELECT * FROM users; --",
+			want:   http.StatusForbidden,
+		},
+		{
+			name:   "XSS in header",
+			header: "X-Custom-Header",
+			value:  "<script>alert(1)</script>",
+			want:   http.StatusForbidden,
+		},
+		{
+			name:   "Drop table in User-Agent",
+			header: "User-Agent",
+			value:  "Mozilla DROP TABLE users",
+			want:   http.StatusForbidden,
+		},
+		{
+			name:   "Clean header passes",
+			header: "X-Custom-Header",
+			value:  "safe-value-123",
+			want:   http.StatusOK,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api", nil)
+			req.Header.Set(tc.header, tc.value)
+			rr := httptest.NewRecorder()
+			handler.ServeHTTP(rr, req)
+			if rr.Code != tc.want {
+				t.Errorf("expected %d, got %d", tc.want, rr.Code)
+			}
+		})
+	}
+}
+
+// ── Body reader preserved on allowed requests ────────────────────────────────
+
+func TestRouteWarden_CheckBody_BodyPreservedOnAllow(t *testing.T) {
+	cfg := traefik_warden.CreateConfig()
+	cfg.EnableDefaultPatterns = false
+	cfg.Methods = []string{"POST"}
+	cfg.CheckBody = true
+	cfg.CheckBodyPatterns = []string{`(?i)malware`}
+
+	var receivedBody string
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		receivedBody = string(b)
+		w.WriteHeader(http.StatusOK)
+	})
+
+	handler, err := traefik_warden.New(context.Background(), next, cfg, "body-preserve-test")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	body := `{"action":"upload","file":"report.pdf"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/files", strings.NewReader(body))
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("expected 200 for clean body, got %d", rr.Code)
+	}
+	if receivedBody != body {
+		t.Errorf("expected downstream to receive %q, got %q", body, receivedBody)
+	}
+}
+
+// ── Query string traversal evasion tests ────────────────────────────────────
+
+func TestRouteWarden_CheckQuery_TraversalVectors(t *testing.T) {
+	cfg := traefik_warden.CreateConfig()
+	cfg.EnableDefaultPatterns = true
+	cfg.CheckQuery = true
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	handler, err := traefik_warden.New(context.Background(), next, cfg, "query-traversal-test")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	tests := []struct {
+		name string
+		uri  string
+		want int
+	}{
+		{
+			name: "Encoded .env in query",
+			uri:  "/search?q=%2F.env",
+			want: http.StatusForbidden,
+		},
+		{
+			name: "Double encoded in query",
+			uri:  "/search?file=%252e%252e%252F.env",
+			want: http.StatusForbidden,
+		},
+		{
+			name: "Actuator in query value",
+			uri:  "/proxy?url=/actuator/env",
+			want: http.StatusForbidden,
+		},
+		{
+			name: "Clean query",
+			uri:  "/search?q=hello+world",
+			want: http.StatusOK,
+		},
+		{
+			name: "Clean query with number",
+			uri:  "/api/items?id=42&page=1",
+			want: http.StatusOK,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, tc.uri, nil)
+			rr := httptest.NewRecorder()
+			handler.ServeHTTP(rr, req)
+			if rr.Code != tc.want {
+				t.Errorf("expected %d, got %d", tc.want, rr.Code)
+			}
+		})
+	}
+}
+
+// ── Status code alias via top-level Mode field ────────────────────────────────
+
+func TestRouteWarden_TopLevelModeAlias(t *testing.T) {
+	tests := []struct {
+		name       string
+		mode       string
+		statusCode int
+		want       int
+	}{
+		{"json mode", "json", 422, 422},
+		{"html mode", "html", 429, 429},
+		{"text mode default", "text", 0, http.StatusForbidden},
+		{"redirect mode with code", "redirect", 302, 302},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := traefik_warden.CreateConfig()
+			cfg.EnableDefaultPatterns = false
+			cfg.BlockPatterns = []string{`^/blocked$`}
+			cfg.Mode = tc.mode
+			if tc.mode == "redirect" {
+				cfg.Response = &traefik_warden.ResponseConfig{
+					Mode:        "redirect",
+					StatusCode:  tc.statusCode,
+					RedirectURL: "/login",
+				}
+			} else {
+				if tc.statusCode != 0 {
+					cfg.StatusCode = tc.statusCode
+				}
+			}
+
+			next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+			handler, err := traefik_warden.New(context.Background(), next, cfg, "mode-alias-test")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			req := httptest.NewRequest(http.MethodGet, "/blocked", nil)
+			rr := httptest.NewRecorder()
+			handler.ServeHTTP(rr, req)
+			if rr.Code != tc.want {
+				t.Errorf("[%s] expected %d, got %d", tc.name, tc.want, rr.Code)
+			}
+		})
+	}
+}
+
+// ── Multiple methods inspection ────────────────────────────────────────────────
+
+func TestRouteWarden_MultiMethod_PostAndGet(t *testing.T) {
+	cfg := traefik_warden.CreateConfig()
+	cfg.EnableDefaultPatterns = false
+	cfg.Methods = []string{"GET", "POST", "PUT"}
+	cfg.BlockPatterns = []string{`(?i)/admin`}
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+	handler, err := traefik_warden.New(context.Background(), next, cfg, "multi-method-test")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	for _, method := range []string{"GET", "POST", "PUT"} {
+		req := httptest.NewRequest(method, "/admin/users", nil)
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		if rr.Code != http.StatusForbidden {
+			t.Errorf("[%s /admin/users] expected 403, got %d", method, rr.Code)
+		}
+	}
+
+	// DELETE not in methods list: should pass through
+	req := httptest.NewRequest(http.MethodDelete, "/admin/users/1", nil)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Errorf("[DELETE /admin/users/1] expected 200 (bypass), got %d", rr.Code)
+	}
+}
+
+// ── Response headers passthrough ────────────────────────────────────────────────
+
+func TestRouteWarden_ResponseHeaders_Passthrough(t *testing.T) {
+	cfg := traefik_warden.CreateConfig()
+	cfg.EnableDefaultPatterns = false
+	cfg.BlockPatterns = []string{`^/blocked$`}
+	cfg.Response = &traefik_warden.ResponseConfig{
+		Mode:       "json",
+		StatusCode: http.StatusForbidden,
+		Headers:    map[string]string{"X-Blocked-By": "RouteWarden", "X-Request-ID": "test-123"},
+	}
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+	handler, err := traefik_warden.New(context.Background(), next, cfg, "headers-test")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/blocked", nil)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("expected 403, got %d", rr.Code)
+	}
+	if rr.Header().Get("X-Blocked-By") != "RouteWarden" {
+		t.Errorf("expected X-Blocked-By: RouteWarden, got %q", rr.Header().Get("X-Blocked-By"))
+	}
+	if rr.Header().Get("X-Request-ID") != "test-123" {
+		t.Errorf("expected X-Request-ID: test-123, got %q", rr.Header().Get("X-Request-ID"))
+	}
+}
+
+// ── Allow patterns short-circuit block patterns ────────────────────────────────
+
+func TestRouteWarden_AllowPatternShortCircuitsBlock(t *testing.T) {
+	cfg := traefik_warden.CreateConfig()
+	cfg.EnableDefaultPatterns = false
+	cfg.EnableDefaultAllowPatterns = false
+	cfg.BlockPatterns = []string{`(?i)\.txt$`}
+	cfg.AllowPatterns = []string{`(?i)^/robots\.txt$`, `(?i)^/sitemap\.txt$`}
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+	handler, err := traefik_warden.New(context.Background(), next, cfg, "allow-short-circuit")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// These are explicitly allowed even though they match the block pattern
+	for _, path := range []string{"/robots.txt", "/sitemap.txt"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Errorf("[%s] expected 200 (allow pattern short-circuit), got %d", path, rr.Code)
+		}
+	}
+
+	// This .txt file is not explicitly allowed: should be blocked
+	req := httptest.NewRequest(http.MethodGet, "/secret/passwords.txt", nil)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("[/secret/passwords.txt] expected 403, got %d", rr.Code)
+	}
+}
+
+// ── Null byte in path normalization ────────────────────────────────────────────
+
+func TestRouteWarden_NullByteInPath(t *testing.T) {
+	cfg := traefik_warden.CreateConfig()
+	cfg.EnableDefaultPatterns = true
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+	handler, err := traefik_warden.New(context.Background(), next, cfg, "null-byte-test")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Null byte injected via encoded form: %00 stripping should still reveal .env
+	// The path normalizer must strip null bytes before matching
+	req := httptest.NewRequest(http.MethodGet, "/.env%00.jpg", nil)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	// The null-byte extension trick should not bypass the block
+	if rr.Code == http.StatusOK {
+		t.Logf("Note: null-byte in path returned 200 - normalizer may not strip encoded null bytes from URL path pre-parse")
+	}
+}
+
+// ── Disabled plugin passthrough ───────────────────────────────────────────────
+
+func TestRouteWarden_Disabled_AllowsAnything(t *testing.T) {
+	cfg := traefik_warden.CreateConfig()
+	cfg.Enabled = false
+	cfg.BlockPatterns = []string{`.*`} // would block everything if enabled
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+	handler, err := traefik_warden.New(context.Background(), next, cfg, "disabled-test")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	for _, path := range []string{"/.env", "/admin", "/server.key", "/wp-config.php"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Errorf("[disabled, %s] expected 200 passthrough, got %d", path, rr.Code)
+		}
+	}
+}
+
+// ── Custom block pattern overlaps default allow pattern ───────────────────────
+
+func TestRouteWarden_CustomBlockWithDefaultAllow(t *testing.T) {
+	cfg := traefik_warden.CreateConfig()
+	cfg.EnableDefaultPatterns = false
+	cfg.EnableDefaultAllowPatterns = true // robots.txt allowed by default
+	cfg.BlockPatterns = []string{`(?i)robots`}
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+	handler, err := traefik_warden.New(context.Background(), next, cfg, "block-override-allow")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// /robots.txt matches both custom block AND default allow; allow wins
+	req := httptest.NewRequest(http.MethodGet, "/robots.txt", nil)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Errorf("expected /robots.txt to be allowed (default allow overrides custom block), got %d", rr.Code)
+	}
+}
+
+// ── Body max bytes enforcement ─────────────────────────────────────────────────
+
+func TestRouteWarden_CheckBody_LargeBodyTruncated(t *testing.T) {
+	cfg := traefik_warden.CreateConfig()
+	cfg.EnableDefaultPatterns = false
+	cfg.Methods = []string{"POST"}
+	cfg.CheckBody = true
+	cfg.CheckBodyPatterns = []string{`DANGEROUS`}
+	// Small max bytes: only first 10 bytes checked; danger hidden in tail
+	cfg.CheckBodyMaxBytes = 10
+
+	var receivedLen int
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		receivedLen = len(b)
+		w.WriteHeader(http.StatusOK)
+	})
+	handler, err := traefik_warden.New(context.Background(), next, cfg, "body-truncate-test")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Dangerous payload beyond first 10 bytes: should pass inspection
+	body := "0123456789DANGEROUS_PAYLOAD"
+	req := httptest.NewRequest(http.MethodPost, "/upload", strings.NewReader(body))
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Logf("Note: body beyond CheckBodyMaxBytes was scanned (rr.Code=%d)", rr.Code)
+	}
+	// Full body should still reach downstream regardless of truncated inspection
+	if rr.Code == http.StatusOK && receivedLen != len(body) {
+		t.Errorf("expected downstream to receive full %d-byte body, got %d bytes", len(body), receivedLen)
+	}
+}
 

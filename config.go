@@ -65,7 +65,6 @@ type Config struct {
 	Enabled                    bool            `json:"enabled,omitempty"`
 	EnableDefaultPatterns      bool            `json:"enableDefaultPatterns,omitempty"`
 	EnableDefaultAllowPatterns bool            `json:"enableDefaultAllowPatterns,omitempty"` // Controls built-in whitelist (robots.txt, sitemap.xml, .well-known)
-	PathPatterns               []string        `json:"pathPatterns,omitempty"`              // Synonym for blockPatterns
 	BlockPatterns              []string        `json:"blockPatterns,omitempty"`
 	AllowPatterns              []string        `json:"allowPatterns,omitempty"`
 	AllowedIPs                []string        `json:"allowedIps,omitempty"`                 // Whitelist of IPs or CIDR subnets exempt from blocking
@@ -77,10 +76,12 @@ type Config struct {
 	Methods                    []string        `json:"methods,omitempty"`                    // HTTP verbs to inspect (defaults to ["GET"])
 	StatusCode                 int             `json:"statusCode,omitempty"`
 	CustomResponseText         string          `json:"customResponseText,omitempty"`
-	Action                     string          `json:"action,omitempty"`                     // Convenience alias for response mode (e.g. "silentDrop", "fakeSuccess", "json")
 	Mode                       string          `json:"mode,omitempty"`                       // Convenience alias for response mode
 	CheckQuery                 bool            `json:"checkQuery,omitempty"`
 	CheckHeaders               []string        `json:"checkHeaders,omitempty"`               // Optional headers to inspect (e.g. X-Forwarded-Uri, X-Rewrite-URL)
+	CheckBody                  bool            `json:"checkBody,omitempty"`                  // Enable inspecting incoming request bodies
+	CheckBodyMaxBytes          int64           `json:"checkBodyMaxBytes,omitempty"`          // Max body bytes to buffer and inspect (default: 65536)
+	CheckBodyPatterns          []string        `json:"checkBodyPatterns,omitempty"`          // Specific regex patterns to match against request body
 	Debug                      bool            `json:"debug,omitempty"`                      // Enable verbose debug logging to stdout/stderr
 	SecurityLog                bool            `json:"securityLog,omitempty"`                // Emit structured JSON security audit events (CrowdSec/SIEM compatible) on block
 	Response                   *ResponseConfig `json:"response,omitempty"`
@@ -92,7 +93,6 @@ func CreateConfig() *Config {
 		Enabled:                    true,
 		EnableDefaultPatterns:      true,
 		EnableDefaultAllowPatterns: true,
-		PathPatterns:               []string{},
 		BlockPatterns:              []string{},
 		AllowPatterns:              []string{},
 		AllowedIPs:                []string{},
@@ -100,7 +100,6 @@ func CreateConfig() *Config {
 		Methods:                    []string{"GET"},
 		StatusCode:                 http.StatusForbidden,
 		CustomResponseText:         "403 Forbidden: Access to sensitive endpoint is blocked",
-		Action:                     "",
 		Mode:                       "",
 		CheckQuery:                 false,
 		CheckHeaders:               []string{},

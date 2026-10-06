@@ -30,7 +30,7 @@ func TestRouteWarden_E2E_Pipeline(t *testing.T) {
 	}
 
 	cfg := traefik_warden.CreateConfig()
-	cfg.PathPatterns = []string{
+	cfg.BlockPatterns = []string{
 		`(?i)^/admin(/.*)?$`,
 		`(?i).*\.secret$`,
 	}

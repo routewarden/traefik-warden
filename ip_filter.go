@@ -27,7 +27,7 @@ func NewIPFilter(allowedIPs []string, trustedProxies []string) (*IPFilter, error
 	var nets []*net.IPNet
 
 	for _, ipStr := range allowedIPs {
-		ipStr = strings.TrimSpace(ipStr)
+		ipStr = cleanIP(ipStr)
 		if ipStr == "" {
 			continue
 		}
@@ -48,7 +48,7 @@ func NewIPFilter(allowedIPs []string, trustedProxies []string) (*IPFilter, error
 
 	var trustedNets []*net.IPNet
 	for _, proxyStr := range trustedProxies {
-		proxyStr = strings.TrimSpace(proxyStr)
+		proxyStr = cleanIP(proxyStr)
 		if proxyStr == "" {
 			continue
 		}
@@ -129,10 +129,7 @@ func (f *IPFilter) extractClientIP(req *http.Request) string {
 	}
 
 	// Determine the direct peer address (socket-level).
-	host, _, err := net.SplitHostPort(req.RemoteAddr)
-	if err != nil {
-		host = strings.Trim(strings.TrimSpace(req.RemoteAddr), "[]")
-	}
+	host := cleanIP(req.RemoteAddr)
 	remoteIP := net.ParseIP(host)
 
 	// Check whether the direct peer is a declared trusted proxy.
@@ -150,24 +147,21 @@ func (f *IPFilter) extractClientIP(req *http.Request) string {
 		// The request arrived from a trusted proxy: honour forwarding headers.
 		if xff := req.Header.Get("X-Forwarded-For"); xff != "" {
 			parts := strings.Split(xff, ",")
-			ip := strings.TrimSpace(parts[0])
+			ip := cleanIP(parts[0])
 			if ip != "" {
-				return cleanIP(ip)
+				return ip
 			}
 		}
 		if xrip := req.Header.Get("X-Real-IP"); xrip != "" {
-			ip := strings.TrimSpace(xrip)
+			ip := cleanIP(xrip)
 			if ip != "" {
-				return cleanIP(ip)
+				return ip
 			}
 		}
 	}
 
 	// Not a trusted proxy (or no usable forwarding header): use the socket address directly.
-	if host != "" {
-		return strings.Trim(host, "[]")
-	}
-	return strings.Trim(strings.TrimSpace(req.RemoteAddr), "[]")
+	return host
 }
 
 // ExtractClientIP extracts the client IP address from proxy headers or the RemoteAddr socket.
@@ -177,34 +171,41 @@ func ExtractClientIP(req *http.Request) string {
 	// Check X-Forwarded-For first (left-most entry is the originating client).
 	if xff := req.Header.Get("X-Forwarded-For"); xff != "" {
 		parts := strings.Split(xff, ",")
-		// Bug 6 fix: strings.Split never returns an empty slice; len(parts)>0 check removed.
-		ip := strings.TrimSpace(parts[0])
+		ip := cleanIP(parts[0])
 		if ip != "" {
-			return cleanIP(ip)
+			return ip
 		}
 	}
 
 	// Check X-Real-IP header
 	if xrip := req.Header.Get("X-Real-IP"); xrip != "" {
-		ip := strings.TrimSpace(xrip)
+		ip := cleanIP(xrip)
 		if ip != "" {
-			return cleanIP(ip)
+			return ip
 		}
 	}
 
 	// Fallback to RemoteAddr (host:port)
-	host, _, err := net.SplitHostPort(req.RemoteAddr)
-	if err == nil && host != "" {
-		return strings.Trim(host, "[]")
-	}
-
-	return strings.Trim(strings.TrimSpace(req.RemoteAddr), "[]")
+	return cleanIP(req.RemoteAddr)
 }
 
 func cleanIP(raw string) string {
 	raw = strings.TrimSpace(raw)
+	if slash := strings.IndexByte(raw, '/'); slash != -1 {
+		ipPart := cleanIP(raw[:slash])
+		maskPart := strings.TrimSpace(raw[slash+1:])
+		if ipPart == "" {
+			return ""
+		}
+		return ipPart + "/" + maskPart
+	}
 	if host, _, err := net.SplitHostPort(raw); err == nil {
 		raw = host
 	}
-	return strings.Trim(raw, "[]")
+	raw = strings.Trim(raw, "[]")
+	if idx := strings.IndexByte(raw, '%'); idx != -1 {
+		raw = raw[:idx]
+	}
+	return raw
 }
+
