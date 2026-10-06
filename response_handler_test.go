@@ -971,4 +971,23 @@ func TestResponseHandler_ClientDisconnect_Streams(t *testing.T) {
 	handlerTarpit.ServeBlockedRequest(errWriterTarpit, req)
 }
 
+func TestResponseHandler_Proxy_UnsafeSchemes(t *testing.T) {
+	unsafeURLs := []string{
+		"javascript:alert(1)",
+		"data:text/plain,hello",
+		"ftp://attacker.com/sink",
+		"file:///etc/passwd",
+	}
+
+	for _, u := range unsafeURLs {
+		_, err := traefik_warden.NewResponseHandler(&traefik_warden.ResponseConfig{
+			Mode:     "proxy",
+			ProxyURL: u,
+		}, 0, "", false)
+		if err == nil {
+			t.Errorf("expected error for unsafe proxyUrl %q, got nil", u)
+		}
+	}
+}
+
 

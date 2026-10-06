@@ -186,6 +186,9 @@ func NewResponseHandler(respCfg *ResponseConfig, topStatusCode int, topCustomTex
 		if err != nil {
 			return nil, fmt.Errorf("invalid proxyUrl %q: %w", respCfg.ProxyURL, err)
 		}
+		if targetURL.Scheme != "http" && targetURL.Scheme != "https" {
+			return nil, fmt.Errorf("unsafe proxyUrl %q: scheme must be http or https", respCfg.ProxyURL)
+		}
 		proxyHandler = httputil.NewSingleHostReverseProxy(targetURL)
 	}
 
