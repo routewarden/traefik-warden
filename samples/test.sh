@@ -224,7 +224,7 @@ test_overrides_and_ip_flags() {
         log_fail "Custom allow pattern (/api/healthz)" "200" "$status"
     fi
 
-    # Custom path_patterns: /admin/secret
+    # Custom block_patterns: /admin/secret
     status=$(curl -s -o /dev/null -w "%{http_code}" "http://${BASE_HOST}:8080/admin/secret-keys")
     if [ "$status" = "403" ]; then
         log_pass "Custom path pattern block (/admin/secret-keys -> HTTP 403)"
