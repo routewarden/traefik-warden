@@ -120,7 +120,7 @@ http:
           debug: true
           securityLog: true
           checkQuery: true
-          pathPatterns:
+          blockPatterns:
             - "(?i)^/admin/secret.*$"
           allowPatterns:
             - "(?i)^/api/healthz$"

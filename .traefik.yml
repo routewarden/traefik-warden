@@ -9,7 +9,7 @@ summary: 'Block requests targeting sensitive endpoints, files (.env, configs, ba
 testData:
   enabled: true
   enableDefaultPatterns: true
-  pathPatterns:
+  blockPatterns:
     - '(?i)(^|/)(\.env.*|.*\.(txt|log|bak|backup|sql|conf|config|ini|yaml|yml))'
     - '(?i)^/admin/(secrets|internal)(/.*)?$'
   allowPatterns:

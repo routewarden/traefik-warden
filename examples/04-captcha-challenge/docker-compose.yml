@@ -26,7 +26,7 @@ services:
       # RouteWarden hCaptcha Middleware Configuration
       # NOTE: No external captcha.html file needed! RouteWarden generates a built-in dark template.
       - "traefik.http.middlewares.hcaptcha-gate.plugin.routewarden.enabled=true"
-      - "traefik.http.middlewares.hcaptcha-gate.plugin.routewarden.pathPatterns=(?i)^/(admin|login)(/.*)?$"
+      - "traefik.http.middlewares.hcaptcha-gate.plugin.routewarden.blockPatterns=(?i)^/(admin|login)(/.*)?$"
       - "traefik.http.middlewares.hcaptcha-gate.plugin.routewarden.response.mode=captcha"
       - "traefik.http.middlewares.hcaptcha-gate.plugin.routewarden.response.statusCode=403"
       - "traefik.http.middlewares.hcaptcha-gate.plugin.routewarden.response.captcha.provider=hcaptcha"
@@ -44,7 +44,7 @@ services:
 
       # RouteWarden Turnstile Middleware Configuration
       - "traefik.http.middlewares.turnstile-gate.plugin.routewarden.enabled=true"
-      - "traefik.http.middlewares.turnstile-gate.plugin.routewarden.pathPatterns=(?i)^/portal(/.*)?$"
+      - "traefik.http.middlewares.turnstile-gate.plugin.routewarden.blockPatterns=(?i)^/portal(/.*)?$"
       - "traefik.http.middlewares.turnstile-gate.plugin.routewarden.response.mode=captcha"
       - "traefik.http.middlewares.turnstile-gate.plugin.routewarden.response.statusCode=403"
       - "traefik.http.middlewares.turnstile-gate.plugin.routewarden.response.captcha.provider=turnstile"
