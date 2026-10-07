@@ -126,7 +126,7 @@ func TestTraefikDockerLabels_DebugFlagToggling(t *testing.T) {
 }
 
 // TestTraefikDockerLabels_FakeSuccess verifies that fakeSuccess mode can be configured
-// via response.mode, top-level mode, or top-level action, and returns synthetic 200 OK decoy payload.
+// via response.mode or top-level mode, and returns synthetic 200 OK decoy payload.
 func TestTraefikDockerLabels_FakeSuccess(t *testing.T) {
 	testCases := []struct {
 		name      string

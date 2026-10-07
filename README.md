@@ -66,7 +66,7 @@ services:
       # Attach routewarden globally to entryPoint 'web'
       - "--entrypoints.web.http.middlewares=warden-shield@docker"
       - "--experimental.plugins.routewarden.modulename=github.com/routewarden/traefik-warden"
-      - "--experimental.plugins.routewarden.version=v1.4.0"
+      - "--experimental.plugins.routewarden.version=v1.4.1"
     ports:
       - "80:80"
     volumes:
@@ -117,7 +117,7 @@ experimental:
   plugins:
     routewarden:
       moduleName: github.com/routewarden/traefik-warden
-      version: v1.4.0
+      version: v1.4.1
 ```
 
 #### 2. Dynamic Configuration (`dynamic_conf.yml`)
@@ -132,7 +132,7 @@ http:
           enabled: true
           enableDefaultPatterns: true
           # Block internal or admin endpoints
-          pathPatterns:
+          blockPatterns:
             - '(?i)^/admin(/.*)?$'
             - '(?i)^/api/internal(/.*)?$'
           # Allow specific public paths or health checks
@@ -168,7 +168,7 @@ http:
 | `enabled` | `bool` | `true` | Enables or disables the middleware. |
 | `enableDefaultPatterns` | `bool` | `true` | Blocks common sensitive files (`.env*`, `.git`, `.aws`, `.sql`, `.bak`, `.log`, configs). |
 | `enableDefaultAllowPatterns` | `bool` | `true` | Keeps standard crawler and discovery files accessible (`/robots.txt`, `/sitemap.xml`, `/.well-known/*`). |
-| `pathPatterns` | `[]string` | `[]` | Additional custom regular expressions to block. |
+| `blockPatterns` | `[]string` | `[]` | Additional custom regular expressions to block. |
 | `allowPatterns` | `[]string` | `[]` | Regular expressions for paths that should always bypass blocking. |
 | `allowedIps` | `[]string` | `[]` | Trusted IPv4/IPv6 addresses or CIDR blocks allowed to bypass path inspection. |
 | `methods` | `[]string` | `["GET"]` | HTTP request methods to inspect (for example: `["GET", "POST"]`). Other methods pass through. |

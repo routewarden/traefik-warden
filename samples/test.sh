@@ -224,12 +224,12 @@ test_overrides_and_ip_flags() {
         log_fail "Custom allow pattern (/api/healthz)" "200" "$status"
     fi
 
-    # Custom path_patterns: /admin/secret
+    # Custom blockPatterns: /admin/secret
     status=$(curl -s -o /dev/null -w "%{http_code}" "http://${BASE_HOST}:8080/admin/secret-keys")
     if [ "$status" = "403" ]; then
-        log_pass "Custom path pattern block (/admin/secret-keys -> HTTP 403)"
+        log_pass "Custom block pattern block (/admin/secret-keys -> HTTP 403)"
     else
-        log_fail "Custom path pattern (/admin/secret-keys)" "403" "$status"
+        log_fail "Custom block pattern (/admin/secret-keys)" "403" "$status"
     fi
 
     # IP Whitelist bypass via X-Forwarded-For (192.168.100.50 is allowed)
@@ -369,19 +369,19 @@ test_response_modes() {
 }
 
 # ------------------------------------------------------------------------------
-# 5. Operational Flags: disable & methods
+# 5. Operational Flags: enabled=false & methods
 # ------------------------------------------------------------------------------
 test_operational_flags() {
-    section "5. Operational Flags: disable & methods (:8092, :8093)"
+    section "5. Operational Flags: enabled=false & methods (:8092, :8093)"
 
-    # Port 8092: disable flag
+    # Port 8092: enabled=false
     local status body
     status=$(curl -s -o /dev/null -w "%{http_code}" "http://${BASE_HOST}:8092/.env" || echo "000")
     body=$(curl -s "http://${BASE_HOST}:8092/.env" || echo "")
     if [ "$status" = "200" ] && [[ "$body" == *"OK: RouteWarden Disabled"* ]]; then
-        log_pass "Flag 'disable' (:8092 -> RouteWarden inactive, request passes downstream)"
+        log_pass "Flag 'enabled: false' (:8092 -> RouteWarden inactive, request passes downstream)"
     else
-        log_fail "Flag 'disable' (:8092)" "200 OK from upstream" "$status - $body"
+        log_fail "Flag 'enabled: false' (:8092)" "200 OK from upstream" "$status - $body"
     fi
 
     # Port 8093: methods filter (inspects only POST & DELETE)

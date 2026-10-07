@@ -7,7 +7,7 @@ services:
       - "--providers.docker.exposedbydefault=false"
       - "--entrypoints.web.address=:80"
       - "--experimental.plugins.routewarden.modulename=github.com/routewarden/traefik-warden"
-      - "--experimental.plugins.routewarden.version=v1.4.0"
+      - "--experimental.plugins.routewarden.version=v1.4.1"
     ports:
       - "80:80"
       - "8080:8080"
@@ -25,7 +25,7 @@ services:
       # RouteWarden IP Whitelist Configuration
       - "traefik.http.middlewares.ip-shield.plugin.routewarden.enabled=true"
       - "traefik.http.middlewares.ip-shield.plugin.routewarden.enableDefaultPatterns=true"
-      - "traefik.http.middlewares.ip-shield.plugin.routewarden.pathPatterns=(?i)^/admin(/.*)?$,(?i)^/metrics(/.*)?$"
+      - "traefik.http.middlewares.ip-shield.plugin.routewarden.blockPatterns=(?i)^/admin(/.*)?$,(?i)^/metrics(/.*)?$"
       # Allowed trusted developer/VPN IPs and subnets
       - "traefik.http.middlewares.ip-shield.plugin.routewarden.allowedIps=10.0.0.0/8,192.168.1.100,172.20.0.50"
       - "traefik.http.middlewares.ip-shield.plugin.routewarden.response.mode=json"

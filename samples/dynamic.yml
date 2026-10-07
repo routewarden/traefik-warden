@@ -112,7 +112,7 @@ http:
           - url: "http://echo-backend:8888"
 
   middlewares:
-    # 1. Port 8080: Core & JSON mode (custom patterns, IP allowlist, check_query, debug, security_log)
+    # 1. Port 8080: Core & JSON mode (custom patterns, IP allowlist, checkQuery, debug, securityLog)
     warden-8080:
       plugin:
         routewarden:
@@ -120,7 +120,7 @@ http:
           debug: true
           securityLog: true
           checkQuery: true
-          pathPatterns:
+          blockPatterns:
             - "(?i)^/admin/secret.*$"
           allowPatterns:
             - "(?i)^/api/healthz$"

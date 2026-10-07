@@ -1,6 +1,7 @@
 package traefik_warden_test
 
 import (
+	"encoding/json"
 	"net/http"
 	"testing"
 
@@ -31,6 +32,9 @@ func TestCreateConfig_Defaults(t *testing.T) {
 	if !cfg.SecurityLog {
 		t.Errorf("expected SecurityLog to default to true")
 	}
+	if len(cfg.BlockPatterns) != 0 {
+		t.Errorf("expected custom BlockPatterns to default to empty slice")
+	}
 	if len(cfg.AllowPatterns) != 0 {
 		t.Errorf("expected custom AllowPatterns to default to empty slice")
 	}
@@ -42,6 +46,28 @@ func TestCreateConfig_Defaults(t *testing.T) {
 	}
 	if cfg.Response == nil || cfg.Response.Mode != "text" {
 		t.Errorf("expected default Response to be initialized with mode text for label unmarshaling compatibility, got %v", cfg.Response)
+	}
+}
+
+func TestConfig_RemovedLegacyAliases(t *testing.T) {
+	// Verify that legacy/removed alias keys (such as pathPatterns, path_patterns, action)
+	// are not mapped to canonical fields (BlockPatterns, Response.Mode) during unmarshaling.
+	rawJSON := `{
+		"pathPatterns": ["(?i)^/legacy-admin"],
+		"path_patterns": ["(?i)^/legacy-path"],
+		"action": "silentDrop"
+	}`
+
+	cfg := traefik_warden.CreateConfig()
+	if err := json.Unmarshal([]byte(rawJSON), cfg); err != nil {
+		t.Fatalf("unexpected unmarshal error: %v", err)
+	}
+
+	if len(cfg.BlockPatterns) != 0 {
+		t.Errorf("expected BlockPatterns to remain empty when legacy pathPatterns is passed, got %v", cfg.BlockPatterns)
+	}
+	if cfg.Response.Mode != "text" {
+		t.Errorf("expected Response.Mode to remain default 'text' when legacy action is passed, got %q", cfg.Response.Mode)
 	}
 }
 

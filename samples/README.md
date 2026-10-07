@@ -27,7 +27,7 @@ samples/
 
 | Port | Mode / Feature | Verification Scenario |
 | :--- | :--- | :--- |
-| **8080** | Core & JSON | Built-in sensitive files (`.env`, `.git`, SQL dumps, actuator endpoints, `.aws` credentials, `package-lock.json`, TLS `.key`/`.pem`, `docker-compose.yml`, `.DS_Store`, `wp-config.php`); anti-evasion traversal (`%252e%252e`), matrix parameters (`/;param`); `check_query`; IP allowlist bypass via `allowed_ips`; `allow_patterns` overrides. |
+| **8080** | Core & JSON | Built-in sensitive files (`.env`, `.git`, SQL dumps, actuator endpoints, `.aws` credentials, `package-lock.json`, TLS `.key`/`.pem`, `docker-compose.yml`, `.DS_Store`, `wp-config.php`); anti-evasion traversal (`%252e%252e`), matrix parameters (`/;param`); `checkQuery`; IP allowlist bypass via `allowedIps`; `allowPatterns` overrides. |
 | **8081** | `html` | Returns custom HTML error page with `text/html` headers. |
 | **8082** | `text` | Returns plain text message with `text/plain` headers. |
 | **8083** | `xml` | Returns structured `<Error>` XML document. |
@@ -39,7 +39,7 @@ samples/
 | **8089** | `silentDrop` | Abruptly terminates TCP socket connection upon probe. |
 | **8090** | `infiniteStream` | Streams continuous garbage data chunks to exhaust automated parsers. |
 | **8091** | `proxy` | Transparently reverse-proxies blocked probes to honeypot backend container. |
-| **8092** | `disable` | Flag verification: RouteWarden disabled, all requests pass through to upstream. |
+| **8092** | `enabled: false` | RouteWarden disabled, all requests pass through to upstream. |
 | **8093** | `methods` | Verb filter verification: Only inspects `POST` & `DELETE`; `GET` bypasses filter. |
 | **8094** | `checkHeaders` | Header inspection: Blocks requests where `X-Forwarded-Uri` or `X-Rewrite-URL` header contains a sensitive path (e.g. `/.env`, `/.git`). |
 
