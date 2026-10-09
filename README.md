@@ -58,7 +58,7 @@ All containers routed through Traefik are protected automatically—no router la
 ```yaml
 services:
   traefik:
-    image: traefik:v3.3
+    image: traefik:latest
     command:
       - "--api.insecure=true"
       - "--providers.docker=true"
