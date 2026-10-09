@@ -66,7 +66,7 @@ services:
       # Attach routewarden globally to entryPoint 'web'
       - "--entrypoints.web.http.middlewares=warden-shield@docker"
       - "--experimental.plugins.routewarden.modulename=github.com/routewarden/traefik-warden"
-      - "--experimental.plugins.routewarden.version=v1.4.1"
+      - "--experimental.plugins.routewarden.version=v1.4.2"
     ports:
       - "80:80"
     volumes:
@@ -117,7 +117,7 @@ experimental:
   plugins:
     routewarden:
       moduleName: github.com/routewarden/traefik-warden
-      version: v1.4.1
+      version: v1.4.2
 ```
 
 #### 2. Dynamic Configuration (`dynamic_conf.yml`)
