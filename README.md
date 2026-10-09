@@ -9,7 +9,7 @@
   <a href="https://github.com/routewarden/traefik-warden/actions/workflows/ci.yml"><img src="https://github.com/routewarden/traefik-warden/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI Status" /></a>
   <a href="https://traefik.io"><img src="https://img.shields.io/badge/Traefik-v2.x%20%7C%20v3.x-24A1C1.svg?logo=traefik&logoColor=white" alt="Traefik Compatibility: v2.x | v3.x" /></a>
   <a href="https://pkg.go.dev/github.com/routewarden/traefik-warden"><img src="https://pkg.go.dev/badge/github.com/routewarden/traefik-warden.svg" alt="Go Reference" /></a>
-  <a href="https://routewarden.github.io/guide/testing"><img src="https://img.shields.io/badge/Coverage-98.4%25-brightgreen.svg" alt="Test Coverage: 98.4%" /></a>
+  <a href="https://routewarden.github.io/traefik/testing"><img src="https://img.shields.io/badge/Coverage-98.4%25-brightgreen.svg" alt="Test Coverage: 98.4%" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT" /></a>
   <a href="https://routewarden.github.io/"><img src="https://img.shields.io/badge/Docs-VitePress%20Wiki-6366f1.svg" alt="Documentation Site" /></a>
 </p>
@@ -171,15 +171,20 @@ http:
 | `blockPatterns` | `[]string` | `[]` | Additional custom regular expressions to block. |
 | `allowPatterns` | `[]string` | `[]` | Regular expressions for paths that should always bypass blocking. |
 | `allowedIps` | `[]string` | `[]` | Trusted IPv4/IPv6 addresses or CIDR blocks allowed to bypass path inspection. |
+| `trustedProxies` | `[]string` | `[]` | Optional upstream proxies/load-balancers trusted for `X-Forwarded-For` / `X-Real-IP`. Untrusted connections use socket IP. |
 | `methods` | `[]string` | `["GET"]` | HTTP request methods to inspect (for example: `["GET", "POST"]`). Other methods pass through. |
 | `checkQuery` | `bool` | `false` | When true, also inspects query parameters against blocked patterns. |
+| `checkHeaders` | `[]string` | `[]` | Optional request headers to inspect for path-evasion (e.g. `["X-Forwarded-Uri", "X-Rewrite-URL"]`). |
+| `checkBody` | `bool` | `false` | When true, buffers and inspects request bodies against blocked patterns. |
+| `checkBodyMaxBytes` | `int64` | `65536` | Maximum bytes to buffer for body inspection (default: 64KB). |
+| `checkBodyPatterns` | `[]string` | `[]` | Specific regex patterns to match against request body (falls back to `blockPatterns` if empty). |
 | `debug` | `bool` | `false` | When true, enables verbose debug logging to standard output. |
 | `securityLog` | `bool` | `true` | When true, emits structured JSON security audit logs on block (CrowdSec / SIEM compatible). |
 | `response.mode` | `string` | `"text"` | Action to take when a request is blocked: `"text"`, `"json"`, `"html"`, `"xml"`, `"captcha"`, `"redirect"`, `"proxy"`, `"silentDrop"`, `"gzipBomb"`, `"tarpit"`, `"fakeSuccess"`, `"rateLimitChallenge"`, or `"infiniteStream"`. |
 | `response.statusCode` | `int` | `403` | HTTP status code returned to the client (such as `404`, `403`, `401`, or `429`). |
 | `response.body` | `string` | `""` | Custom payload returned in the response body. |
 
-> For the complete list of settings (including Captcha keys, custom HTML templates, and header injection), read the **[Full Configuration Reference](https://routewarden.github.io/reference/configuration)**.  
+> For the complete list of settings (including Captcha keys, custom HTML templates, and header injection), read the **[Full Configuration Reference](https://routewarden.github.io/traefik/configuration)**.  
 > **Note on `gzipBomb`**: Use this mode only on verified honeypot paths or endpoints targeted exclusively by bots (such as `/.env` or `/wp-login.php`). Never use it on shared generic routes where normal users or legitimate crawlers might get caught. Always keep `enableDefaultAllowPatterns: true` to avoid blocking `/robots.txt`.
 
 ---
@@ -221,10 +226,10 @@ For complete documentation on the CLI, installation methods, and options, visit 
 For detailed setup instructions, architecture deep dives, and production examples, check the documentation:
 
 - [Interactive Live Playground](https://routewarden.github.io/?playground=open)
-- [Getting Started & Installation](https://routewarden.github.io/guide/getting-started)
-- [Architecture & Request Pipeline](https://routewarden.github.io/guide/architecture)
-- [Local Development & Testing](https://routewarden.github.io/guide/local-deployment)
-- [Testing Architecture & Coverage](https://routewarden.github.io/guide/testing)
+- [Getting Started & Installation](https://routewarden.github.io/traefik/getting-started)
+- [Architecture & Request Pipeline](https://routewarden.github.io/core/architecture)
+- [Local Development & Testing](https://routewarden.github.io/traefik/local-deployment)
+- [Testing Architecture & Coverage](https://routewarden.github.io/traefik/testing)
 - [Configuration Reference](https://routewarden.github.io/traefik/configuration)
 - [Response Modes & Defense Actions](https://routewarden.github.io/reference/response-modes)
 - [Custom Path Patterns & Regex](https://routewarden.github.io/reference/custom-paths)
