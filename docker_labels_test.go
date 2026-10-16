@@ -359,3 +359,120 @@ func TestTraefikDockerLabels_SecurityLog(t *testing.T) {
 	}
 }
 
+// TestTraefikDockerLabels_EdgeCases covers plan items DL-1 through DL-5.
+func TestTraefikDockerLabels_EdgeCases(t *testing.T) {
+	ctx := context.Background()
+	dummyHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	// DL-1: Block pattern value containing a comma (commas are common separators in label tools)
+	t.Run("DL-1 comma in blockPattern value", func(t *testing.T) {
+		labelJSON := `{"blockPatterns": ["(?i)^/a,b$","(?i)^/admin"]}`
+		cfg := traefik_warden.CreateConfig()
+		if err := json.Unmarshal([]byte(labelJSON), cfg); err != nil {
+			t.Fatalf("unexpected unmarshal error: %v", err)
+		}
+		handler, err := traefik_warden.New(ctx, dummyHandler, cfg, "dl-1")
+		if err != nil {
+			t.Fatalf("unexpected New error: %v", err)
+		}
+		req := httptest.NewRequest(http.MethodGet, "/admin", nil)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("expected 403 for /admin, got %d", rec.Code)
+		}
+	})
+
+	// DL-2: Label value with embedded newline character
+	t.Run("DL-2 embedded newline in blockPattern", func(t *testing.T) {
+		labelJSON := `{"blockPatterns": ["(?i)^/admin\n?.*$"]}`
+		cfg := traefik_warden.CreateConfig()
+		if err := json.Unmarshal([]byte(labelJSON), cfg); err != nil {
+			t.Fatalf("unexpected unmarshal error: %v", err)
+		}
+		_, err := traefik_warden.New(ctx, dummyHandler, cfg, "dl-2")
+		if err != nil {
+			t.Fatalf("unexpected error for newline in pattern: %v", err)
+		}
+	})
+
+	// DL-3: Very long label value (>4096 chars) must not panic or truncate silently
+	t.Run("DL-3 very long blockPattern value", func(t *testing.T) {
+		longPattern := "(?i)^/" + strings.Repeat("a", 4096) + "$"
+		labelJSONBytes, _ := json.Marshal(map[string]any{
+			"blockPatterns": []string{longPattern},
+		})
+		cfg := traefik_warden.CreateConfig()
+		if err := json.Unmarshal(labelJSONBytes, cfg); err != nil {
+			t.Fatalf("unexpected unmarshal error: %v", err)
+		}
+		// Must not panic; compile error is acceptable for extreme patterns
+		_, err := traefik_warden.New(ctx, dummyHandler, cfg, "dl-3")
+		if err != nil {
+			t.Logf("New() returned error for very long pattern (acceptable): %v", err)
+		}
+	})
+
+	// DL-4: Unknown field name in label JSON must be silently ignored
+	t.Run("DL-4 unknown field name silently ignored", func(t *testing.T) {
+		labelJSON := `{
+			"unknownFieldXyz": "some-value",
+			"anotherUnknownField": 42,
+			"enabled": true
+		}`
+		cfg := traefik_warden.CreateConfig()
+		if err := json.Unmarshal([]byte(labelJSON), cfg); err != nil {
+			t.Fatalf("unexpected unmarshal error for unknown fields: %v", err)
+		}
+		if !cfg.Enabled {
+			t.Errorf("expected Enabled to remain true after unknown-field label JSON")
+		}
+	})
+
+	// DL-5: Full round-trip with all canonical label keys
+	t.Run("DL-5 all canonical label keys round-trip", func(t *testing.T) {
+		labelJSON := `{
+			"enabled": true,
+			"debug": false,
+			"enableDefaultPatterns": true,
+			"enableDefaultAllowPatterns": true,
+			"securityLog": true,
+			"checkQuery": true,
+			"checkBody": false,
+			"methods": ["GET", "POST"],
+			"statusCode": 403,
+			"blockPatterns": ["(?i)^/blocked$"],
+			"allowPatterns": ["(?i)^/allowed$"],
+			"allowedIPs": ["10.0.0.0/8"],
+			"response": {"mode": "json"}
+		}`
+		cfg := traefik_warden.CreateConfig()
+		if err := json.Unmarshal([]byte(labelJSON), cfg); err != nil {
+			t.Fatalf("unexpected unmarshal error: %v", err)
+		}
+		handler, err := traefik_warden.New(ctx, dummyHandler, cfg, "dl-5")
+		if err != nil {
+			t.Fatalf("unexpected New error: %v", err)
+		}
+
+		// Blocked path
+		reqBlock := httptest.NewRequest(http.MethodGet, "/blocked", nil)
+		recBlock := httptest.NewRecorder()
+		handler.ServeHTTP(recBlock, reqBlock)
+		if recBlock.Code != http.StatusForbidden {
+			t.Errorf("expected /blocked to return 403, got %d", recBlock.Code)
+		}
+
+		// Allowed path passes through
+		reqAllow := httptest.NewRequest(http.MethodGet, "/allowed", nil)
+		recAllow := httptest.NewRecorder()
+		handler.ServeHTTP(recAllow, reqAllow)
+		if recAllow.Code != http.StatusOK {
+			t.Errorf("expected /allowed to return 200, got %d", recAllow.Code)
+		}
+	})
+}
+
+

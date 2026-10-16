@@ -62,6 +62,9 @@ type ResponseConfig struct {
 
 // Config holds the plugin configuration.
 type Config struct {
+	// ConfigFile is an optional path to a routewarden.json file that provides base
+	// configuration. Inline fields take precedence over any values set in the file.
+	ConfigFile                 string          `json:"configFile,omitempty"`
 	Enabled                    bool            `json:"enabled,omitempty"`
 	EnableDefaultPatterns      bool            `json:"enableDefaultPatterns,omitempty"`
 	EnableDefaultAllowPatterns bool            `json:"enableDefaultAllowPatterns,omitempty"` // Controls built-in whitelist (robots.txt, sitemap.xml, .well-known)
