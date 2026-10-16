@@ -66,7 +66,7 @@ services:
       # Attach routewarden globally to entryPoint 'web'
       - "--entrypoints.web.http.middlewares=warden-shield@docker"
       - "--experimental.plugins.routewarden.modulename=github.com/routewarden/traefik-warden"
-      - "--experimental.plugins.routewarden.version=v1.4.2"
+      - "--experimental.plugins.routewarden.version=v1.5.0"
     ports:
       - "80:80"
     volumes:
@@ -117,7 +117,7 @@ experimental:
   plugins:
     routewarden:
       moduleName: github.com/routewarden/traefik-warden
-      version: v1.4.2
+      version: v1.5.0
 ```
 
 #### 2. Dynamic Configuration (`dynamic_conf.yml`)
@@ -165,6 +165,7 @@ http:
 
 | Option | Type | Default | Description |
 |---|---|---|---|
+| `configFile` | `string` | `""` | Path to a `routewarden.json` base configuration file. Inline Traefik options override file values. |
 | `enabled` | `bool` | `true` | Enables or disables the middleware. |
 | `enableDefaultPatterns` | `bool` | `true` | Blocks common sensitive files (`.env*`, `.git`, `.aws`, `.sql`, `.bak`, `.log`, configs). |
 | `enableDefaultAllowPatterns` | `bool` | `true` | Keeps standard crawler and discovery files accessible (`/robots.txt`, `/sitemap.xml`, `/.well-known/*`). |
