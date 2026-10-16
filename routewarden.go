@@ -39,6 +39,37 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		config = CreateConfig()
 	}
 
+	// If a configFile path is set, load it as the base and merge inline values on top.
+	// Inline fields always win: we snapshot the inline config, unmarshal the file into
+	// a fresh default, then re-apply the inline snapshot so non-zero inline values
+	// override whatever the file specified.
+	if config.ConfigFile != "" {
+		fileData, err := os.ReadFile(config.ConfigFile)
+		if err != nil {
+			return nil, fmt.Errorf("routewarden [%s]: cannot read configFile %q: %w", name, config.ConfigFile, err)
+		}
+
+		// Start from a fresh default so every file field is honoured.
+		fileCfg := CreateConfig()
+		if err := json.Unmarshal(fileData, fileCfg); err != nil {
+			return nil, fmt.Errorf("routewarden [%s]: cannot parse configFile %q: %w", name, config.ConfigFile, err)
+		}
+
+		// Re-encode the inline config; any field present in the JSON snapshot
+		// (i.e. explicitly set by the operator) will override the file value.
+		inlineData, err := json.Marshal(config)
+		if err != nil {
+			return nil, fmt.Errorf("routewarden [%s]: cannot re-encode inline config: %w", name, err)
+		}
+		if err := json.Unmarshal(inlineData, fileCfg); err != nil {
+			return nil, fmt.Errorf("routewarden [%s]: cannot merge inline config: %w", name, err)
+		}
+
+		// Keep configFile path so callers can inspect it, but continue with merged config.
+		fileCfg.ConfigFile = config.ConfigFile
+		config = fileCfg
+	}
+
 	methodsMap := make(map[string]struct{})
 	if len(config.Methods) == 0 {
 		methodsMap["GET"] = struct{}{}

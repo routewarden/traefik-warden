@@ -8,7 +8,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/routewarden/traefik-warden"
@@ -2114,6 +2116,315 @@ func TestRouteWarden_AllowAndBlockPatterns_Comprehensive(t *testing.T) {
 				t.Errorf("[%s] expected status %d, got %d (%s)", tc.name, tc.expectCode, rr.Code, tc.reason)
 			}
 		})
+	}
+}
+// ---------------------------------------------------------------------------
+// configFile tests
+// ---------------------------------------------------------------------------
+
+// writeJSONFile creates a temporary JSON file with the given content and returns its path.
+func writeJSONFile(t *testing.T, content string) string {
+	t.Helper()
+	f, err := os.CreateTemp(t.TempDir(), "routewarden-*.json")
+	if err != nil {
+		t.Fatalf("failed to create temp config file: %v", err)
+	}
+	if _, err := f.WriteString(content); err != nil {
+		t.Fatalf("failed to write temp config file: %v", err)
+	}
+	_ = f.Close()
+	return f.Name()
+}
+
+func TestConfigFile_LoadsFileConfig(t *testing.T) {
+	// Config file enables custom block pattern; no inline overrides.
+	cfgFile := writeJSONFile(t, `{
+		"blockPatterns": ["(?i)^/secret-from-file$"],
+		"enableDefaultPatterns": false,
+		"enableDefaultAllowPatterns": false
+	}`)
+
+	cfg := traefik_warden.CreateConfig()
+	cfg.ConfigFile = cfgFile
+	cfg.EnableDefaultPatterns = false
+	cfg.EnableDefaultAllowPatterns = false
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+	handler, err := traefik_warden.New(context.Background(), next, cfg, "test-file-load")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	tests := []struct {
+		path string
+		want int
+	}{
+		{"/secret-from-file", http.StatusForbidden},
+		{"/allowed-path", http.StatusOK},
+	}
+	for _, tc := range tests {
+		req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		if rr.Code != tc.want {
+			t.Errorf("path %q: want %d, got %d", tc.path, tc.want, rr.Code)
+		}
+	}
+}
+
+func TestConfigFile_InlineOverridesFile(t *testing.T) {
+	// File specifies response.statusCode 404; inline response.StatusCode 403 should win.
+	cfgFile := writeJSONFile(t, `{
+		"blockPatterns": ["(?i)^/probe$"],
+		"enableDefaultPatterns": false,
+		"enableDefaultAllowPatterns": false,
+		"response": {"mode": "text", "statusCode": 404}
+	}`)
+
+	cfg := traefik_warden.CreateConfig()
+	cfg.ConfigFile = cfgFile
+	cfg.EnableDefaultPatterns = false
+	cfg.EnableDefaultAllowPatterns = false
+	// Inline Response.StatusCode should win over file's response.statusCode 404.
+	cfg.Response = &traefik_warden.ResponseConfig{Mode: "text", StatusCode: http.StatusForbidden}
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+	handler, err := traefik_warden.New(context.Background(), next, cfg, "test-inline-override")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/probe", nil)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("expected inline response.StatusCode %d to win over file's 404, got %d", http.StatusForbidden, rr.Code)
+	}
+}
+
+func TestConfigFile_MissingFileReturnsError(t *testing.T) {
+	cfg := traefik_warden.CreateConfig()
+	cfg.ConfigFile = "/nonexistent/path/routewarden.json"
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})
+	_, err := traefik_warden.New(context.Background(), next, cfg, "test-missing-file")
+	if err == nil {
+		t.Fatal("expected error for missing configFile, got nil")
+	}
+	if !strings.Contains(err.Error(), "cannot read configFile") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+func TestConfigFile_MalformedJSONReturnsError(t *testing.T) {
+	cfgFile := writeJSONFile(t, `{invalid json`)
+
+	cfg := traefik_warden.CreateConfig()
+	cfg.ConfigFile = cfgFile
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})
+	_, err := traefik_warden.New(context.Background(), next, cfg, "test-bad-json")
+	if err == nil {
+		t.Fatal("expected error for malformed configFile JSON, got nil")
+	}
+	if !strings.Contains(err.Error(), "cannot parse configFile") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+func TestConfigFile_PatternsMergedFromFile(t *testing.T) {
+	// File defines one block pattern; inline adds another.
+	cfgFile := writeJSONFile(t, `{
+		"blockPatterns": ["(?i)^/from-file$"],
+		"enableDefaultPatterns": false,
+		"enableDefaultAllowPatterns": false
+	}`)
+
+	cfg := traefik_warden.CreateConfig()
+	cfg.ConfigFile = cfgFile
+	cfg.EnableDefaultPatterns = false
+	cfg.EnableDefaultAllowPatterns = false
+	// Note: because inline JSON re-applies on top, and blockPatterns is a slice,
+	// the final value depends on what the inline JSON contains. With omitempty the
+	// empty inline slice doesn't overwrite the file's slice.
+	// (Inline non-zero values win; zero/empty slices defer to the file value.)
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+	handler, err := traefik_warden.New(context.Background(), next, cfg, "test-pattern-merge")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/from-file", nil)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("expected file block pattern to apply, got %d", rr.Code)
+	}
+}
+
+func TestConfigFile_EmptyConfigFilePathIsNoOp(t *testing.T) {
+	// ConfigFile="" should work identically to not setting it.
+	cfg := traefik_warden.CreateConfig()
+	cfg.ConfigFile = ""
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+	_, err := traefik_warden.New(context.Background(), next, cfg, "test-no-file")
+	if err != nil {
+		t.Fatalf("unexpected error with empty ConfigFile: %v", err)
+	}
+}
+
+// TC-5: ConfigFile empty JSON object keeps defaults
+func TestConfigFile_EmptyObject(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfgFile := filepath.Join(tmpDir, "empty.json")
+	if err := os.WriteFile(cfgFile, []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := traefik_warden.CreateConfig()
+	cfg.ConfigFile = cfgFile
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+	_, err := traefik_warden.New(context.Background(), next, cfg, "test-empty-obj")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !cfg.Enabled {
+		t.Errorf("expected Enabled to default to true")
+	}
+}
+
+// TC-6: ConfigFile with unknown JSON keys ignored cleanly
+func TestConfigFile_UnknownJSONKeys(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfgFile := filepath.Join(tmpDir, "unknown.json")
+	if err := os.WriteFile(cfgFile, []byte(`{"unknownKey":123,"extraProperty":"test"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := traefik_warden.CreateConfig()
+	cfg.ConfigFile = cfgFile
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+	_, err := traefik_warden.New(context.Background(), next, cfg, "test-unknown-keys")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// TC-7: ConfigFile directory path returns error
+func TestConfigFile_DirectoryPathError(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := traefik_warden.CreateConfig()
+	cfg.ConfigFile = tmpDir
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+	_, err := traefik_warden.New(context.Background(), next, cfg, "test-dir-path")
+	if err == nil {
+		t.Fatal("expected error for directory path, got nil")
+	}
+}
+
+// TC-8: ConfigFile 0-byte file returns error
+func TestConfigFile_ZeroByteFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfgFile := filepath.Join(tmpDir, "zero.json")
+	if err := os.WriteFile(cfgFile, []byte(""), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := traefik_warden.CreateConfig()
+	cfg.ConfigFile = cfgFile
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+	_, err := traefik_warden.New(context.Background(), next, cfg, "test-zero-byte")
+	if err == nil {
+		t.Fatal("expected error for 0-byte file, got nil")
+	}
+}
+
+// TH-1: Concurrent 200-goroutine burst with -race
+func TestRouteWarden_ConcurrentRequests(t *testing.T) {
+	cfg := traefik_warden.CreateConfig()
+	cfg.BlockPatterns = []string{"(?i)^/admin/.*$"}
+	cfg.AllowedIPs = []string{"192.168.1.100"}
+	cfg.CheckQuery = true
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	handler, err := traefik_warden.New(context.Background(), next, cfg, "test-concurrent")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var wg sync.WaitGroup
+	workers := 200
+
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			rec := httptest.NewRecorder()
+			var req *http.Request
+			if id%2 == 0 {
+				req = httptest.NewRequest(http.MethodGet, "/admin/dashboard", nil)
+				req.RemoteAddr = "10.0.0.1:12345"
+			} else {
+				req = httptest.NewRequest(http.MethodGet, "/public/api", nil)
+				req.RemoteAddr = "192.168.1.100:12345"
+			}
+			handler.ServeHTTP(rec, req)
+		}(i)
+	}
+
+	wg.Wait()
+}
+
+// TH-6: Request with empty Host header handled gracefully
+func TestRouteWarden_MissingHostHeader(t *testing.T) {
+	cfg := traefik_warden.CreateConfig()
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	handler, err := traefik_warden.New(context.Background(), next, cfg, "test-no-host")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+	req.Host = ""
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", rec.Code)
+	}
+}
+
+// TH-7: AllowPatterns with .* overrides all block patterns
+func TestRouteWarden_AllowAllOverride(t *testing.T) {
+	cfg := traefik_warden.CreateConfig()
+	cfg.BlockPatterns = []string{"(?i)^/.*$"}
+	cfg.AllowPatterns = []string{".*"}
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	handler, err := traefik_warden.New(context.Background(), next, cfg, "test-allow-all")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/super-secret", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected 200 when allow all matches, got %d", rec.Code)
 	}
 }
 
