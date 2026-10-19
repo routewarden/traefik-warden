@@ -40,29 +40,328 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 	}
 
 	// If a configFile path is set, load it as the base and merge inline values on top.
-	// Inline fields always win: we snapshot the inline config, unmarshal the file into
-	// a fresh default, then re-apply the inline snapshot so non-zero inline values
-	// override whatever the file specified.
 	if config.ConfigFile != "" {
 		fileData, err := os.ReadFile(config.ConfigFile)
 		if err != nil {
 			return nil, fmt.Errorf("routewarden [%s]: cannot read configFile %q: %w", name, config.ConfigFile, err)
 		}
 
-		// Start from a fresh default so every file field is honoured.
-		fileCfg := CreateConfig()
-		if err := json.Unmarshal(fileData, fileCfg); err != nil {
+		type sharedResponseConfig struct {
+			Mode                          *string           `json:"mode"`
+			StatusCode                    *int              `json:"statusCode"`
+			StatusCodeSnake               *int              `json:"status_code"`
+			ContentType                   *string           `json:"contentType"`
+			ContentTypeSnake              *string           `json:"content_type"`
+			Body                          *string           `json:"body"`
+			Headers                       map[string]string `json:"headers"`
+			RedirectURL                   *string           `json:"redirectUrl"`
+			RedirectURLSnake              *string           `json:"redirect_url"`
+			ProxyURL                      *string           `json:"proxyUrl"`
+			ProxyURLSnake                 *string           `json:"proxy_url"`
+			Captcha                       *CaptchaConfig    `json:"captcha"`
+			GzipBombMB                    *int              `json:"gzipBombMB"`
+			GzipBombMBSnake               *int              `json:"gzip_bomb_mb"`
+			RetryAfterSeconds             *int              `json:"retryAfterSeconds"`
+			RetryAfterSecondsSnake        *int              `json:"retry_after_seconds"`
+			TarpitDelayMs                 *int              `json:"tarpitDelayMs"`
+			TarpitDelayMsSnake            *int              `json:"tarpit_delay_ms"`
+			TarpitMaxDurationSeconds      *int              `json:"tarpitMaxDurationSeconds"`
+			TarpitMaxDurationSecondsSnake *int              `json:"tarpit_max_duration_seconds"`
+			StreamSizeMB                  *int              `json:"streamSizeMB"`
+			StreamSizeMBSnake             *int              `json:"stream_size_mb"`
+		}
+
+		type sharedConfigFile struct {
+			Enabled                         *bool                 `json:"enabled"`
+			EnableDefaultPatterns           *bool                 `json:"enableDefaultPatterns"`
+			EnableDefaultPatternsSnake      *bool                 `json:"enable_default_patterns"`
+			EnableDefaultAllowPatterns      *bool                 `json:"enableDefaultAllowPatterns"`
+			EnableDefaultAllowPatternsSnake *bool                 `json:"enable_default_allow_patterns"`
+			BlockPatterns                   []string              `json:"blockPatterns"`
+			BlockPatternsSnake              []string              `json:"block_patterns"`
+			AllowPatterns                   []string              `json:"allowPatterns"`
+			AllowPatternsSnake              []string              `json:"allow_patterns"`
+			AllowedIPs                      []string              `json:"allowedIps"`
+			AllowedIPsSnake                 []string              `json:"allowed_ips"`
+			TrustedProxies                  []string              `json:"trustedProxies"`
+			TrustedProxiesSnake             []string              `json:"trusted_proxies"`
+			Methods                         []string              `json:"methods"`
+			CheckQuery                      *bool                 `json:"checkQuery"`
+			CheckQuerySnake                 *bool                 `json:"check_query"`
+			CheckHeaders                    []string              `json:"checkHeaders"`
+			CheckHeadersSnake               []string              `json:"check_headers"`
+			CheckBody                       *bool                 `json:"checkBody"`
+			CheckBodySnake                  *bool                 `json:"check_body"`
+			CheckBodyMaxBytes               *int64                `json:"checkBodyMaxBytes"`
+			CheckBodyMaxBytesSnake          *int64                `json:"check_body_max_bytes"`
+			CheckBodyPatterns               []string              `json:"checkBodyPatterns"`
+			CheckBodyPatternsSnake          []string              `json:"check_body_patterns"`
+			StatusCode                      *int                  `json:"statusCode"`
+			StatusCodeSnake                 *int                  `json:"status_code"`
+			CustomResponseText              *string               `json:"customResponseText"`
+			CustomResponseTextSnake         *string               `json:"custom_response_text"`
+			Mode                            *string               `json:"mode"`
+			Debug                           *bool                 `json:"debug"`
+			SecurityLog                     *bool                 `json:"securityLog"`
+			SecurityLogSnake                *bool                 `json:"security_log"`
+			Response                        *sharedResponseConfig `json:"response"`
+		}
+
+		var scf sharedConfigFile
+		if err := json.Unmarshal(fileData, &scf); err != nil {
 			return nil, fmt.Errorf("routewarden [%s]: cannot parse configFile %q: %w", name, config.ConfigFile, err)
 		}
 
-		// Re-encode the inline config; any field present in the JSON snapshot
-		// (i.e. explicitly set by the operator) will override the file value.
-		inlineData, err := json.Marshal(config)
-		if err != nil {
-			return nil, fmt.Errorf("routewarden [%s]: cannot re-encode inline config: %w", name, err)
+		// Start from a fresh default so every file field is honoured.
+		fileCfg := CreateConfig()
+		if scf.Enabled != nil {
+			fileCfg.Enabled = *scf.Enabled
 		}
-		if err := json.Unmarshal(inlineData, fileCfg); err != nil {
-			return nil, fmt.Errorf("routewarden [%s]: cannot merge inline config: %w", name, err)
+		if scf.EnableDefaultPatterns != nil {
+			fileCfg.EnableDefaultPatterns = *scf.EnableDefaultPatterns
+		} else if scf.EnableDefaultPatternsSnake != nil {
+			fileCfg.EnableDefaultPatterns = *scf.EnableDefaultPatternsSnake
+		}
+		if scf.EnableDefaultAllowPatterns != nil {
+			fileCfg.EnableDefaultAllowPatterns = *scf.EnableDefaultAllowPatterns
+		} else if scf.EnableDefaultAllowPatternsSnake != nil {
+			fileCfg.EnableDefaultAllowPatterns = *scf.EnableDefaultAllowPatternsSnake
+		}
+		if len(scf.BlockPatterns) > 0 {
+			fileCfg.BlockPatterns = scf.BlockPatterns
+		} else if len(scf.BlockPatternsSnake) > 0 {
+			fileCfg.BlockPatterns = scf.BlockPatternsSnake
+		}
+		if len(scf.AllowPatterns) > 0 {
+			fileCfg.AllowPatterns = scf.AllowPatterns
+		} else if len(scf.AllowPatternsSnake) > 0 {
+			fileCfg.AllowPatterns = scf.AllowPatternsSnake
+		}
+		if len(scf.AllowedIPs) > 0 {
+			fileCfg.AllowedIPs = scf.AllowedIPs
+		} else if len(scf.AllowedIPsSnake) > 0 {
+			fileCfg.AllowedIPs = scf.AllowedIPsSnake
+		}
+		if len(scf.TrustedProxies) > 0 {
+			fileCfg.TrustedProxies = scf.TrustedProxies
+		} else if len(scf.TrustedProxiesSnake) > 0 {
+			fileCfg.TrustedProxies = scf.TrustedProxiesSnake
+		}
+		if len(scf.Methods) > 0 {
+			fileCfg.Methods = scf.Methods
+		}
+		if scf.CheckQuery != nil {
+			fileCfg.CheckQuery = *scf.CheckQuery
+		} else if scf.CheckQuerySnake != nil {
+			fileCfg.CheckQuery = *scf.CheckQuerySnake
+		}
+		if len(scf.CheckHeaders) > 0 {
+			fileCfg.CheckHeaders = scf.CheckHeaders
+		} else if len(scf.CheckHeadersSnake) > 0 {
+			fileCfg.CheckHeaders = scf.CheckHeadersSnake
+		}
+		if scf.CheckBody != nil {
+			fileCfg.CheckBody = *scf.CheckBody
+		} else if scf.CheckBodySnake != nil {
+			fileCfg.CheckBody = *scf.CheckBodySnake
+		}
+		if scf.CheckBodyMaxBytes != nil {
+			fileCfg.CheckBodyMaxBytes = *scf.CheckBodyMaxBytes
+		} else if scf.CheckBodyMaxBytesSnake != nil {
+			fileCfg.CheckBodyMaxBytes = *scf.CheckBodyMaxBytesSnake
+		}
+		if len(scf.CheckBodyPatterns) > 0 {
+			fileCfg.CheckBodyPatterns = scf.CheckBodyPatterns
+		} else if len(scf.CheckBodyPatternsSnake) > 0 {
+			fileCfg.CheckBodyPatterns = scf.CheckBodyPatternsSnake
+		}
+		if scf.StatusCode != nil {
+			fileCfg.StatusCode = *scf.StatusCode
+		} else if scf.StatusCodeSnake != nil {
+			fileCfg.StatusCode = *scf.StatusCodeSnake
+		}
+		if scf.CustomResponseText != nil {
+			fileCfg.CustomResponseText = *scf.CustomResponseText
+		} else if scf.CustomResponseTextSnake != nil {
+			fileCfg.CustomResponseText = *scf.CustomResponseTextSnake
+		}
+		if scf.Mode != nil {
+			fileCfg.Mode = *scf.Mode
+		}
+		if scf.Debug != nil {
+			fileCfg.Debug = *scf.Debug
+		}
+		if scf.SecurityLog != nil {
+			fileCfg.SecurityLog = *scf.SecurityLog
+		} else if scf.SecurityLogSnake != nil {
+			fileCfg.SecurityLog = *scf.SecurityLogSnake
+		}
+		if scf.Response != nil {
+			if fileCfg.Response == nil {
+				fileCfg.Response = &ResponseConfig{Mode: "text"}
+			}
+			if scf.Response.Mode != nil {
+				fileCfg.Response.Mode = *scf.Response.Mode
+			}
+			if scf.Response.StatusCode != nil {
+				fileCfg.Response.StatusCode = *scf.Response.StatusCode
+			} else if scf.Response.StatusCodeSnake != nil {
+				fileCfg.Response.StatusCode = *scf.Response.StatusCodeSnake
+			}
+			if scf.Response.ContentType != nil {
+				fileCfg.Response.ContentType = *scf.Response.ContentType
+			} else if scf.Response.ContentTypeSnake != nil {
+				fileCfg.Response.ContentType = *scf.Response.ContentTypeSnake
+			}
+			if scf.Response.Body != nil {
+				fileCfg.Response.Body = *scf.Response.Body
+			}
+			if scf.Response.Headers != nil {
+				fileCfg.Response.Headers = scf.Response.Headers
+			}
+			if scf.Response.RedirectURL != nil {
+				fileCfg.Response.RedirectURL = *scf.Response.RedirectURL
+			} else if scf.Response.RedirectURLSnake != nil {
+				fileCfg.Response.RedirectURL = *scf.Response.RedirectURLSnake
+			}
+			if scf.Response.ProxyURL != nil {
+				fileCfg.Response.ProxyURL = *scf.Response.ProxyURL
+			} else if scf.Response.ProxyURLSnake != nil {
+				fileCfg.Response.ProxyURL = *scf.Response.ProxyURLSnake
+			}
+			if scf.Response.Captcha != nil {
+				fileCfg.Response.Captcha = scf.Response.Captcha
+			}
+			if scf.Response.GzipBombMB != nil {
+				fileCfg.Response.GzipBombMB = *scf.Response.GzipBombMB
+			} else if scf.Response.GzipBombMBSnake != nil {
+				fileCfg.Response.GzipBombMB = *scf.Response.GzipBombMBSnake
+			}
+			if scf.Response.RetryAfterSeconds != nil {
+				fileCfg.Response.RetryAfterSeconds = *scf.Response.RetryAfterSeconds
+			} else if scf.Response.RetryAfterSecondsSnake != nil {
+				fileCfg.Response.RetryAfterSeconds = *scf.Response.RetryAfterSecondsSnake
+			}
+			if scf.Response.TarpitDelayMs != nil {
+				fileCfg.Response.TarpitDelayMs = *scf.Response.TarpitDelayMs
+			} else if scf.Response.TarpitDelayMsSnake != nil {
+				fileCfg.Response.TarpitDelayMs = *scf.Response.TarpitDelayMsSnake
+			}
+			if scf.Response.TarpitMaxDurationSeconds != nil {
+				fileCfg.Response.TarpitMaxDurationSeconds = *scf.Response.TarpitMaxDurationSeconds
+			} else if scf.Response.TarpitMaxDurationSecondsSnake != nil {
+				fileCfg.Response.TarpitMaxDurationSeconds = *scf.Response.TarpitMaxDurationSecondsSnake
+			}
+			if scf.Response.StreamSizeMB != nil {
+				fileCfg.Response.StreamSizeMB = *scf.Response.StreamSizeMB
+			} else if scf.Response.StreamSizeMBSnake != nil {
+				fileCfg.Response.StreamSizeMB = *scf.Response.StreamSizeMBSnake
+			}
+		}
+
+		// Apply explicit inline overrides (only where the caller explicitly modified values from CreateConfig)
+		defaultCfg := CreateConfig()
+		if config.Enabled != defaultCfg.Enabled {
+			fileCfg.Enabled = config.Enabled
+		}
+		if config.EnableDefaultPatterns != defaultCfg.EnableDefaultPatterns {
+			fileCfg.EnableDefaultPatterns = config.EnableDefaultPatterns
+		}
+		if config.EnableDefaultAllowPatterns != defaultCfg.EnableDefaultAllowPatterns {
+			fileCfg.EnableDefaultAllowPatterns = config.EnableDefaultAllowPatterns
+		}
+		if len(config.BlockPatterns) > 0 {
+			fileCfg.BlockPatterns = config.BlockPatterns
+		}
+		if len(config.AllowPatterns) > 0 {
+			fileCfg.AllowPatterns = config.AllowPatterns
+		}
+		if len(config.AllowedIPs) > 0 {
+			fileCfg.AllowedIPs = config.AllowedIPs
+		}
+		if len(config.TrustedProxies) > 0 {
+			fileCfg.TrustedProxies = config.TrustedProxies
+		}
+		if len(config.Methods) > 0 && (len(config.Methods) != 1 || config.Methods[0] != "GET") {
+			fileCfg.Methods = config.Methods
+		}
+		if config.StatusCode != defaultCfg.StatusCode && config.StatusCode != 0 {
+			fileCfg.StatusCode = config.StatusCode
+		}
+		if config.CustomResponseText != defaultCfg.CustomResponseText && config.CustomResponseText != "" {
+			fileCfg.CustomResponseText = config.CustomResponseText
+		}
+		if config.Mode != "" {
+			fileCfg.Mode = config.Mode
+			if fileCfg.Response != nil {
+				fileCfg.Response.Mode = config.Mode
+			}
+		}
+		if config.CheckQuery != defaultCfg.CheckQuery {
+			fileCfg.CheckQuery = config.CheckQuery
+		}
+		if len(config.CheckHeaders) > 0 {
+			fileCfg.CheckHeaders = config.CheckHeaders
+		}
+		if config.CheckBody != defaultCfg.CheckBody {
+			fileCfg.CheckBody = config.CheckBody
+		}
+		if config.CheckBodyMaxBytes > 0 && config.CheckBodyMaxBytes != 65536 {
+			fileCfg.CheckBodyMaxBytes = config.CheckBodyMaxBytes
+		}
+		if len(config.CheckBodyPatterns) > 0 {
+			fileCfg.CheckBodyPatterns = config.CheckBodyPatterns
+		}
+		if config.Debug != defaultCfg.Debug {
+			fileCfg.Debug = config.Debug
+		}
+		if config.SecurityLog != defaultCfg.SecurityLog {
+			fileCfg.SecurityLog = config.SecurityLog
+		}
+		if config.Response != nil {
+			if fileCfg.Response == nil {
+				fileCfg.Response = config.Response
+			} else {
+				if config.Response.Mode != "" && config.Response.Mode != "text" {
+					fileCfg.Response.Mode = config.Response.Mode
+				}
+				if config.Response.StatusCode != 0 {
+					fileCfg.Response.StatusCode = config.Response.StatusCode
+				}
+				if config.Response.Body != "" {
+					fileCfg.Response.Body = config.Response.Body
+				}
+				if config.Response.ContentType != "" {
+					fileCfg.Response.ContentType = config.Response.ContentType
+				}
+				if len(config.Response.Headers) > 0 {
+					fileCfg.Response.Headers = config.Response.Headers
+				}
+				if config.Response.RedirectURL != "" {
+					fileCfg.Response.RedirectURL = config.Response.RedirectURL
+				}
+				if config.Response.ProxyURL != "" {
+					fileCfg.Response.ProxyURL = config.Response.ProxyURL
+				}
+				if config.Response.Captcha != nil {
+					fileCfg.Response.Captcha = config.Response.Captcha
+				}
+				if config.Response.GzipBombMB > 0 {
+					fileCfg.Response.GzipBombMB = config.Response.GzipBombMB
+				}
+				if config.Response.RetryAfterSeconds > 0 {
+					fileCfg.Response.RetryAfterSeconds = config.Response.RetryAfterSeconds
+				}
+				if config.Response.TarpitDelayMs > 0 {
+					fileCfg.Response.TarpitDelayMs = config.Response.TarpitDelayMs
+				}
+				if config.Response.TarpitMaxDurationSeconds > 0 {
+					fileCfg.Response.TarpitMaxDurationSeconds = config.Response.TarpitMaxDurationSeconds
+				}
+				if config.Response.StreamSizeMB > 0 {
+					fileCfg.Response.StreamSizeMB = config.Response.StreamSizeMB
+				}
+			}
 		}
 
 		// Keep configFile path so callers can inspect it, but continue with merged config.
