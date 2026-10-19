@@ -682,6 +682,9 @@ func TestResponseHandler_EdgeCases(t *testing.T) {
 	if rrBombZero.Header().Get("Content-Encoding") != "gzip" {
 		t.Errorf("expected gzip encoding")
 	}
+	if rrBombZero.Code != http.StatusOK {
+		t.Errorf("expected gzipBomb with omitted statusCode to default to 200 OK, got %d", rrBombZero.Code)
+	}
 }
 
 func TestResponseHandler_NilConfig_Defaults(t *testing.T) {
