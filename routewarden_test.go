@@ -2345,6 +2345,105 @@ func TestConfigFile_ZeroByteFile(t *testing.T) {
 	}
 }
 
+// TC-9: ConfigFile with snake_case and custom status code survives CreateConfig defaults
+func TestConfigFile_SnakeCaseAndStatusCodesSurviveDefaults(t *testing.T) {
+	cfgFile := writeJSONFile(t, `{
+		"status_code": 404,
+		"methods": ["GET", "POST"],
+		"security_log": false,
+		"response": {
+			"mode": "json",
+			"body": "{\"error\":\"not_found_test\"}"
+		},
+		"block_patterns": ["(?i)^/secret-snake$"],
+		"enable_default_patterns": false,
+		"enable_default_allow_patterns": false
+	}`)
+
+	cfg := traefik_warden.CreateConfig()
+	cfg.ConfigFile = cfgFile
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+	handler, err := traefik_warden.New(context.Background(), next, cfg, "test-snake-status")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// 1. Verify GET /secret-snake is blocked with 404 and JSON body
+	req := httptest.NewRequest(http.MethodGet, "/secret-snake", nil)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("expected 404 from file configuration, got %d", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), "not_found_test") {
+		t.Errorf("expected JSON body 'not_found_test', got %s", rr.Body.String())
+	}
+
+	// 2. Verify POST /secret-snake is also inspected and blocked
+	reqPost := httptest.NewRequest(http.MethodPost, "/secret-snake", nil)
+	rrPost := httptest.NewRecorder()
+	handler.ServeHTTP(rrPost, reqPost)
+	if rrPost.Code != http.StatusNotFound {
+		t.Errorf("expected POST to be inspected and blocked with 404, got %d", rrPost.Code)
+	}
+
+	// 3. Allowed path returns 200
+	reqOk := httptest.NewRequest(http.MethodGet, "/public-api", nil)
+	rrOk := httptest.NewRecorder()
+	handler.ServeHTTP(rrOk, reqOk)
+	if rrOk.Code != http.StatusOK {
+		t.Errorf("expected 200 for allowed path, got %d", rrOk.Code)
+	}
+}
+
+// TC-10: ConfigFile with snake_case patterns and IP filters
+func TestConfigFile_SnakeCasePatternsAndIPFilter(t *testing.T) {
+	cfgFile := writeJSONFile(t, `{
+		"block_patterns": ["(?i)^/snake-block$"],
+		"allow_patterns": ["(?i)^/snake-allow$"],
+		"allowed_ips": ["192.168.1.50"],
+		"trusted_proxies": ["10.0.0.1"],
+		"enable_default_patterns": false,
+		"enable_default_allow_patterns": false
+	}`)
+
+	cfg := traefik_warden.CreateConfig()
+	cfg.ConfigFile = cfgFile
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+	handler, err := traefik_warden.New(context.Background(), next, cfg, "test-snake-patterns")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Blocked path from untrusted IP
+	req := httptest.NewRequest(http.MethodGet, "/snake-block", nil)
+	req.RemoteAddr = "203.0.113.10:1234"
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("expected 403 for /snake-block, got %d", rr.Code)
+	}
+
+	// Whitelisted IP bypasses block
+	reqIP := httptest.NewRequest(http.MethodGet, "/snake-block", nil)
+	reqIP.RemoteAddr = "192.168.1.50:1234"
+	rrIP := httptest.NewRecorder()
+	handler.ServeHTTP(rrIP, reqIP)
+	if rrIP.Code != http.StatusOK {
+		t.Errorf("expected 200 for allowed IP, got %d", rrIP.Code)
+	}
+
+	// Allow pattern bypasses block
+	reqAllow := httptest.NewRequest(http.MethodGet, "/snake-allow", nil)
+	rrAllow := httptest.NewRecorder()
+	handler.ServeHTTP(rrAllow, reqAllow)
+	if rrAllow.Code != http.StatusOK {
+		t.Errorf("expected 200 for /snake-allow, got %d", rrAllow.Code)
+	}
+}
+
 // TH-1: Concurrent 200-goroutine burst with -race
 func TestRouteWarden_ConcurrentRequests(t *testing.T) {
 	cfg := traefik_warden.CreateConfig()
