@@ -258,7 +258,7 @@ func TestTraefikDockerLabels_AllResponseModes(t *testing.T) {
 				"enabled": true,
 				"mode": "gzipBomb"
 			}`,
-			expectedStatus: http.StatusForbidden,
+			expectedStatus: http.StatusOK,
 			expectedHeader: "gzip",
 			expectedSubstr: "",
 		},

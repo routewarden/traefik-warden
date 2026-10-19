@@ -137,10 +137,25 @@ func NewResponseHandler(respCfg *ResponseConfig, topStatusCode int, topCustomTex
 		}
 	} else {
 		if respCfg.StatusCode == 0 {
-			if topStatusCode != 0 {
+			if topStatusCode != 0 && topStatusCode != http.StatusForbidden {
 				respCfg.StatusCode = topStatusCode
 			} else {
-				respCfg.StatusCode = http.StatusForbidden
+				switch strings.ToLower(respCfg.Mode) {
+				case "gzipbomb", "bomb":
+					respCfg.StatusCode = http.StatusOK
+				case "fakesuccess", "decoy":
+					respCfg.StatusCode = http.StatusOK
+				case "ratelimit", "ratelimitchallenge", "backoff":
+					respCfg.StatusCode = http.StatusTooManyRequests
+				case "redirect":
+					respCfg.StatusCode = http.StatusFound
+				default:
+					if topStatusCode != 0 {
+						respCfg.StatusCode = topStatusCode
+					} else {
+						respCfg.StatusCode = http.StatusForbidden
+					}
+				}
 			}
 		}
 		if respCfg.Body == "" && topCustomText != "" && (respCfg.Mode == "" || strings.EqualFold(respCfg.Mode, "text")) {
@@ -168,7 +183,7 @@ func NewResponseHandler(respCfg *ResponseConfig, topStatusCode int, topCustomTex
 	}
 
 	var parsedTmpl *template.Template
-	if respCfg.Mode == "captcha" {
+	if strings.EqualFold(respCfg.Mode, "captcha") {
 		tmplText := defaultCaptchaHTML
 		if respCfg.Captcha != nil && strings.TrimSpace(respCfg.Captcha.Template) != "" {
 			tmplText = respCfg.Captcha.Template
@@ -319,7 +334,7 @@ func (h *ResponseHandler) ServeBlockedRequest(w http.ResponseWriter, req *http.R
 			_, _ = w.Write(buf.Bytes())
 			return
 		}
-		_, _ = fmt.Fprintln(w, "Security Challenge Required")
+		_, _ = fmt.Fprintln(w, "<!DOCTYPE html><html><head><title>Security Check Required</title></head><body><h1>Security Challenge Required</h1><p>Please complete the challenge to proceed.</p></body></html>")
 
 	case "gzipbomb", "bomb":
 		contentType := h.config.ContentType
@@ -328,8 +343,11 @@ func (h *ResponseHandler) ServeBlockedRequest(w http.ResponseWriter, req *http.R
 		}
 		w.Header().Set("Content-Type", contentType)
 		w.Header().Set("Content-Encoding", "gzip")
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.WriteHeader(h.config.StatusCode)
+		statusCode := h.config.StatusCode
+		if statusCode == 0 {
+			statusCode = http.StatusOK
+		}
+		w.WriteHeader(statusCode)
 
 		// Size in MB to generate. Each 1MB of zero-bytes compresses to ~1KB in gzip,
 		// expanding ~1000x on the client during decompression.
