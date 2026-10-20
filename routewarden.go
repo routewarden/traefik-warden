@@ -59,8 +59,8 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 			ProxyURL                      *string           `json:"proxyUrl"`
 			ProxyURLSnake                 *string           `json:"proxy_url"`
 			Captcha                       *CaptchaConfig    `json:"captcha"`
-			GzipBombMB                    *int              `json:"gzipBombMB"`
-			GzipBombMBSnake               *int              `json:"gzip_bomb_mb"`
+			GzipBombMB                    *float64          `json:"gzipBombMB"`
+			GzipBombMBSnake               *float64          `json:"gzip_bomb_mb"`
 			RetryAfterSeconds             *int              `json:"retryAfterSeconds"`
 			RetryAfterSecondsSnake        *int              `json:"retry_after_seconds"`
 			TarpitDelayMs                 *int              `json:"tarpitDelayMs"`
@@ -372,6 +372,16 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 	methodsMap := make(map[string]struct{})
 	if len(config.Methods) == 0 {
 		methodsMap["GET"] = struct{}{}
+		if config.CheckBody || len(config.CheckBodyPatterns) > 0 {
+			methodsMap["POST"] = struct{}{}
+			methodsMap["PUT"] = struct{}{}
+			methodsMap["PATCH"] = struct{}{}
+		}
+	} else if len(config.Methods) == 1 && strings.EqualFold(config.Methods[0], "GET") && (config.CheckBody || len(config.CheckBodyPatterns) > 0) {
+		methodsMap["GET"] = struct{}{}
+		methodsMap["POST"] = struct{}{}
+		methodsMap["PUT"] = struct{}{}
+		methodsMap["PATCH"] = struct{}{}
 	} else {
 		for _, m := range config.Methods {
 			m = strings.ToUpper(strings.TrimSpace(m))
@@ -554,7 +564,10 @@ func (rw *RouteWarden) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 
 	// Only inspect requests whose HTTP method matches configured verbs (default: GET)
-	if _, matchesMethod := rw.methods[strings.ToUpper(req.Method)]; !matchesMethod {
+	_, hasWildcard := rw.methods["*"]
+	_, hasAll := rw.methods["ALL"]
+	_, matchesMethod := rw.methods[strings.ToUpper(req.Method)]
+	if !hasWildcard && !hasAll && !matchesMethod {
 		rw.logDebug("method %s not in inspected methods, bypassing", req.Method)
 		rw.next.ServeHTTP(w, req)
 		return

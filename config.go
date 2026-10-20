@@ -1,6 +1,9 @@
 package traefik_warden
 
-import "net/http"
+import (
+	"encoding/json"
+	"net/http"
+)
 
 // DefaultBlockPatterns contains well-known sensitive endpoints and file extensions.
 var DefaultBlockPatterns = []string{
@@ -43,6 +46,29 @@ type CaptchaConfig struct {
 	Template string `json:"template,omitempty"` // Custom HTML template
 }
 
+// UnmarshalJSON implements flexible unmarshaling supporting both camelCase (siteKey) and snake_case (site_key) tags.
+func (c *CaptchaConfig) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		Provider     string `json:"provider"`
+		SiteKey      string `json:"siteKey"`
+		SiteKeySnake string `json:"site_key"`
+		Title        string `json:"title"`
+		Template     string `json:"template"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	c.Provider = raw.Provider
+	if raw.SiteKey != "" {
+		c.SiteKey = raw.SiteKey
+	} else {
+		c.SiteKey = raw.SiteKeySnake
+	}
+	c.Title = raw.Title
+	c.Template = raw.Template
+	return nil
+}
+
 // ResponseConfig defines how blocked requests should be answered.
 type ResponseConfig struct {
 	Mode        string            `json:"mode,omitempty"`        // "text", "json", "html", "captcha", "redirect"
@@ -53,7 +79,7 @@ type ResponseConfig struct {
 	RedirectURL             string            `json:"redirectUrl,omitempty"`             // Target URL when Mode is "redirect"
 	ProxyURL                string            `json:"proxyUrl,omitempty"`                // Target backend honeypot URL when Mode is "proxy"
 	Captcha                 *CaptchaConfig    `json:"captcha,omitempty"`                 // Captcha settings when Mode is "captcha"
-	GzipBombMB              int               `json:"gzipBombMB,omitempty"`              // Uncompressed size in Megabytes for gzipBomb mode (default: 10)
+	GzipBombMB              float64           `json:"gzipBombMB,omitempty"`              // Uncompressed size in Megabytes for gzipBomb mode (default: 10, supports float e.g. 0.5)
 	RetryAfterSeconds       int               `json:"retryAfterSeconds,omitempty"`       // Seconds for Retry-After header when Mode is "rateLimitChallenge" (default: 300)
 	TarpitDelayMs           int               `json:"tarpitDelayMs,omitempty"`           // Milliseconds between bytes for tarpit mode (default: 1000)
 	TarpitMaxDurationSeconds int              `json:"tarpitMaxDurationSeconds,omitempty"`// Max seconds before terminating tarpit connection (default: 60)
