@@ -551,6 +551,7 @@ func TestRouteWarden_SecurityEvasionVectors(t *testing.T) {
 		{"Semicolon matrix parameter prefix", "/;.env"},
 		{"Semicolon path segment suffix", "/static;param=123/.env"},
 		{"Semicolon within path", "/api;.env/config.json"},
+		{"Matrix param with allowlist token bypass attempt", "/.env;robots.txt"},
 
 		// Backslash path separation (Windows / IIS / reverse-proxy normalizer evasion)
 		{"Backslash traversal", "/static\\..\\.env"},
@@ -2524,6 +2525,113 @@ func TestRouteWarden_AllowAllOverride(t *testing.T) {
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Errorf("expected 200 when allow all matches, got %d", rec.Code)
+	}
+}
+
+func TestRouteWarden_MatrixParam_NoAllowlistBypass(t *testing.T) {
+	cfg := traefik_warden.CreateConfig()
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("SHOULD NOT BE REACHED"))
+	})
+
+	handler, err := traefik_warden.New(context.Background(), next, cfg, "matrix-bypass-test")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	attackPaths := []string{
+		"/.env;robots.txt",
+		"/.env;sitemap.xml",
+		"/.env;.well-known/acme-challenge/token",
+		"/backup.sql;robots.txt",
+		"/.git/config;robots.txt",
+		"/config.yaml;security.txt",
+	}
+
+	for _, p := range attackPaths {
+		req := httptest.NewRequest(http.MethodGet, p, nil)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("expected path %q to be blocked (403), got %d", p, rec.Code)
+		}
+	}
+
+	// Legitimate path with matrix parameters should be allowed
+	legitReq := httptest.NewRequest(http.MethodGet, "/robots.txt;v=1", nil)
+	legitRec := httptest.NewRecorder()
+	handler.ServeHTTP(legitRec, legitReq)
+	if legitRec.Code != http.StatusOK {
+		t.Errorf("expected legitimate /robots.txt;v=1 to be allowed (200), got %d", legitRec.Code)
+	}
+}
+
+func TestRouteWarden_Methods_WildcardAndAll(t *testing.T) {
+	for _, m := range []string{"*", "ALL"} {
+		t.Run("Wildcard "+m, func(t *testing.T) {
+			cfg := traefik_warden.CreateConfig()
+			cfg.Methods = []string{m}
+			next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			})
+			handler, err := traefik_warden.New(context.Background(), next, cfg, "test-methods-"+m)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			for _, verb := range []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodPatch} {
+				req := httptest.NewRequest(verb, "/.env", nil)
+				rec := httptest.NewRecorder()
+				handler.ServeHTTP(rec, req)
+				if rec.Code != http.StatusForbidden {
+					t.Errorf("expected %s /.env to be blocked (403) with methods [%s], got %d", verb, m, rec.Code)
+				}
+			}
+		})
+	}
+}
+
+func TestRouteWarden_CheckBody_AutoMethodExpansion(t *testing.T) {
+	cfg := traefik_warden.CreateConfig()
+	// Leave cfg.Methods as default (or omit)
+	cfg.CheckBody = true
+	cfg.CheckBodyPatterns = []string{"(?i)grant_type=password"}
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	handler, err := traefik_warden.New(context.Background(), next, cfg, "auto-method-test")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// 1. Attack payload in POST body should be blocked even though methods was not explicitly set to POST
+	reqBlocked := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader("grant_type=password&user=admin"))
+	recBlocked := httptest.NewRecorder()
+	handler.ServeHTTP(recBlocked, reqBlocked)
+	if recBlocked.Code != http.StatusForbidden {
+		t.Errorf("expected POST with blocked body to be 403, got %d", recBlocked.Code)
+	}
+
+	// 2. Benign payload in POST body should pass
+	reqAllowed := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader("grant_type=client_credentials"))
+	recAllowed := httptest.NewRecorder()
+	handler.ServeHTTP(recAllowed, reqAllowed)
+	if recAllowed.Code != http.StatusOK {
+		t.Errorf("expected benign POST to be 200, got %d", recAllowed.Code)
+	}
+}
+
+func TestCaptchaConfig_SiteKeySnakeCase(t *testing.T) {
+	rawJSON := `{"provider":"turnstile","site_key":"0x4AAAAAAtestkey","title":"Challenge"}`
+	var cfg traefik_warden.CaptchaConfig
+	if err := json.Unmarshal([]byte(rawJSON), &cfg); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+	if cfg.SiteKey != "0x4AAAAAAtestkey" {
+		t.Errorf("expected SiteKey to be '0x4AAAAAAtestkey', got %q", cfg.SiteKey)
 	}
 }
 

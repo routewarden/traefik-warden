@@ -370,6 +370,33 @@ func TestResponseHandler_GzipBomb(t *testing.T) {
 	if rrCustom.Header().Get("Content-Type") != "text/plain" {
 		t.Errorf("expected text/plain Content-Type, got %s", rrCustom.Header().Get("Content-Type"))
 	}
+
+	// 3. Test fractional floating gzipBombMB (e.g. 0.5 MB = 512 KB = 16 x 32KB chunks)
+	cfgFloat := &traefik_warden.ResponseConfig{
+		Mode:       "gzipBomb",
+		GzipBombMB: 0.5,
+	}
+	handlerFloat, err := traefik_warden.NewResponseHandler(cfgFloat, 0, "", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	rrFloat := httptest.NewRecorder()
+	handlerFloat.ServeBlockedRequest(rrFloat, req)
+	if rrFloat.Header().Get("Content-Encoding") != "gzip" {
+		t.Errorf("expected Content-Encoding: gzip")
+	}
+	gzr, err := gzip.NewReader(rrFloat.Body)
+	if err != nil {
+		t.Fatalf("failed to create gzip reader: %v", err)
+	}
+	defer gzr.Close()
+	decompressed, err := io.ReadAll(gzr)
+	if err != nil {
+		t.Fatalf("failed reading gzip bomb: %v", err)
+	}
+	if len(decompressed) != 512*1024 {
+		t.Errorf("expected 524288 decompressed bytes (0.5MB), got %d", len(decompressed))
+	}
 }
 
 func TestResponseHandler_XML(t *testing.T) {
