@@ -364,9 +364,9 @@ func (h *ResponseHandler) ServeBlockedRequest(w http.ResponseWriter, req *http.R
 
 		// Stream 32KB zero chunks through gzip writer
 		zeroChunk := make([]byte, 32*1024)
-		totalChunks := (targetMB * 1024 * 1024) / len(zeroChunk)
+		totalChunks := int((targetMB * 1024 * 1024) / float64(len(zeroChunk)))
 		if totalChunks <= 0 {
-			totalChunks = 32
+			totalChunks = 1
 		}
 
 		for i := 0; i < totalChunks; i++ {

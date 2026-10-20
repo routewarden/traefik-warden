@@ -52,23 +52,15 @@ func ExtractCandidatePaths(rawPath, pathStr, requestURI string) []string {
 		if strings.ContainsRune(p, ';') {
 			parts := strings.Split(p, "/")
 			cleanedSegments := make([]string, len(parts))
-			paramSegments := make([]string, 0)
 			for i, seg := range parts {
-				if semiIdx := strings.IndexByte(seg, ';'); semiIdx != -1 {
-					cleanedSegments[i] = seg[:semiIdx]
-					paramSegments = append(paramSegments, seg[semiIdx+1:])
+				if before, _, ok := strings.Cut(seg, ";"); ok {
+					cleanedSegments[i] = before
 				} else {
 					cleanedSegments[i] = seg
 				}
 			}
 			matrixStripped := strings.Join(cleanedSegments, "/")
 			pathsToCheck = append(pathsToCheck, path.Clean(matrixStripped))
-
-			for _, param := range paramSegments {
-				if param != "" {
-					pathsToCheck = append(pathsToCheck, "/"+param, path.Clean("/"+param))
-				}
-			}
 
 			semiAsSlash := strings.ReplaceAll(p, ";", "/")
 			pathsToCheck = append(pathsToCheck, path.Clean(semiAsSlash))
