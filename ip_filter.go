@@ -9,6 +9,7 @@ import (
 
 // IPFilter evaluates incoming requests against an IP or CIDR subnet whitelist.
 type IPFilter struct {
+	asn         *ASNFilter
 	allowedIPs  []net.IP
 	allowedNets []*net.IPNet
 	// trustedNets is the set of upstream proxies (e.g. Traefik, load-balancers) whose
@@ -82,6 +83,15 @@ func NewIPFilter(allowedIPs []string, trustedProxies []string) (*IPFilter, error
 
 // IsAllowed returns true if the client IP in the request matches any whitelisted IP or subnet.
 func (f *IPFilter) IsAllowed(req *http.Request) bool {
+	if f.asn != nil {
+		address := cleanIP(req.RemoteAddr)
+		if len(f.trustedNets) > 0 {
+			address = f.extractClientIP(req)
+		}
+		if f.asn.IsAllowed(address) {
+			return true
+		}
+	}
 	if len(f.allowedIPs) == 0 && len(f.allowedNets) == 0 {
 		return false
 	}
@@ -208,4 +218,3 @@ func cleanIP(raw string) string {
 	}
 	return raw
 }
-
