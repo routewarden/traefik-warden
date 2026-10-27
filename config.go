@@ -71,49 +71,51 @@ func (c *CaptchaConfig) UnmarshalJSON(data []byte) error {
 
 // ResponseConfig defines how blocked requests should be answered.
 type ResponseConfig struct {
-	Mode        string            `json:"mode,omitempty"`        // "text", "json", "html", "captcha", "redirect"
-	StatusCode  int               `json:"statusCode,omitempty"`  // HTTP status code (e.g. 403, 404, 429)
-	ContentType string            `json:"contentType,omitempty"` // Custom Content-Type header override
-	Body        string            `json:"body,omitempty"`        // Response payload (JSON string, HTML, or text)
-	Headers     map[string]string `json:"headers,omitempty"`     // Custom response headers (e.g. Retry-After, X-Blocked-By)
-	RedirectURL             string            `json:"redirectUrl,omitempty"`             // Target URL when Mode is "redirect"
-	ProxyURL                string            `json:"proxyUrl,omitempty"`                // Target backend honeypot URL when Mode is "proxy"
-	Captcha                 *CaptchaConfig    `json:"captcha,omitempty"`                 // Captcha settings when Mode is "captcha"
-	GzipBombMB              float64           `json:"gzipBombMB,omitempty"`              // Uncompressed size in Megabytes for gzipBomb mode (default: 10, supports float e.g. 0.5)
-	RetryAfterSeconds       int               `json:"retryAfterSeconds,omitempty"`       // Seconds for Retry-After header when Mode is "rateLimitChallenge" (default: 300)
-	TarpitDelayMs           int               `json:"tarpitDelayMs,omitempty"`           // Milliseconds between bytes for tarpit mode (default: 1000)
-	TarpitMaxDurationSeconds int              `json:"tarpitMaxDurationSeconds,omitempty"`// Max seconds before terminating tarpit connection (default: 60)
-	StreamSizeMB            int               `json:"streamSizeMB,omitempty"`            // Size in Megabytes for infiniteStream/garbageStream mode (default: 100)
+	Mode                     string            `json:"mode,omitempty"`                     // "text", "json", "html", "captcha", "redirect"
+	StatusCode               int               `json:"statusCode,omitempty"`               // HTTP status code (e.g. 403, 404, 429)
+	ContentType              string            `json:"contentType,omitempty"`              // Custom Content-Type header override
+	Body                     string            `json:"body,omitempty"`                     // Response payload (JSON string, HTML, or text)
+	Headers                  map[string]string `json:"headers,omitempty"`                  // Custom response headers (e.g. Retry-After, X-Blocked-By)
+	RedirectURL              string            `json:"redirectUrl,omitempty"`              // Target URL when Mode is "redirect"
+	ProxyURL                 string            `json:"proxyUrl,omitempty"`                 // Target backend honeypot URL when Mode is "proxy"
+	Captcha                  *CaptchaConfig    `json:"captcha,omitempty"`                  // Captcha settings when Mode is "captcha"
+	GzipBombMB               float64           `json:"gzipBombMB,omitempty"`               // Uncompressed size in Megabytes for gzipBomb mode (default: 10, supports float e.g. 0.5)
+	RetryAfterSeconds        int               `json:"retryAfterSeconds,omitempty"`        // Seconds for Retry-After header when Mode is "rateLimitChallenge" (default: 300)
+	TarpitDelayMs            int               `json:"tarpitDelayMs,omitempty"`            // Milliseconds between bytes for tarpit mode (default: 1000)
+	TarpitMaxDurationSeconds int               `json:"tarpitMaxDurationSeconds,omitempty"` // Max seconds before terminating tarpit connection (default: 60)
+	StreamSizeMB             int               `json:"streamSizeMB,omitempty"`             // Size in Megabytes for infiniteStream/garbageStream mode (default: 100)
 }
 
 // Config holds the plugin configuration.
 type Config struct {
 	// ConfigFile is an optional path to a routewarden.json file that provides base
 	// configuration. Inline fields take precedence over any values set in the file.
-	ConfigFile                 string          `json:"configFile,omitempty"`
-	Enabled                    bool            `json:"enabled,omitempty"`
-	EnableDefaultPatterns      bool            `json:"enableDefaultPatterns,omitempty"`
-	EnableDefaultAllowPatterns bool            `json:"enableDefaultAllowPatterns,omitempty"` // Controls built-in whitelist (robots.txt, sitemap.xml, .well-known)
-	BlockPatterns              []string        `json:"blockPatterns,omitempty"`
-	AllowPatterns              []string        `json:"allowPatterns,omitempty"`
-	AllowedIPs                []string        `json:"allowedIps,omitempty"`                 // Whitelist of IPs or CIDR subnets exempt from blocking
+	ConfigFile                 string   `json:"configFile,omitempty"`
+	Enabled                    bool     `json:"enabled,omitempty"`
+	EnableDefaultPatterns      bool     `json:"enableDefaultPatterns,omitempty"`
+	EnableDefaultAllowPatterns bool     `json:"enableDefaultAllowPatterns,omitempty"` // Controls built-in whitelist (robots.txt, sitemap.xml, .well-known)
+	BlockPatterns              []string `json:"blockPatterns,omitempty"`
+	AllowPatterns              []string `json:"allowPatterns,omitempty"`
+	AllowedASNs                []string `json:"allowedASNs,omitempty"`
+	ASNDB                      string   `json:"asnDB,omitempty"`
+	AllowedIPs                 []string `json:"allowedIps,omitempty"` // Whitelist of IPs or CIDR subnets exempt from blocking
 	// TrustedProxies lists IPs/CIDRs of upstream proxies (e.g. Traefik, load-balancers) whose
 	// X-Forwarded-For and X-Real-IP headers are trusted when resolving the real client IP.
 	// When empty, XFF is trusted unconditionally (legacy behaviour). When set, only requests
 	// arriving from a listed proxy will have their XFF header honoured; all others use RemoteAddr.
-	TrustedProxies             []string        `json:"trustedProxies,omitempty"`
-	Methods                    []string        `json:"methods,omitempty"`                    // HTTP verbs to inspect (defaults to ["GET"])
-	StatusCode                 int             `json:"statusCode,omitempty"`
-	CustomResponseText         string          `json:"customResponseText,omitempty"`
-	Mode                       string          `json:"mode,omitempty"`                       // Convenience alias for response mode
-	CheckQuery                 bool            `json:"checkQuery,omitempty"`
-	CheckHeaders               []string        `json:"checkHeaders,omitempty"`               // Optional headers to inspect (e.g. X-Forwarded-Uri, X-Rewrite-URL)
-	CheckBody                  bool            `json:"checkBody,omitempty"`                  // Enable inspecting incoming request bodies
-	CheckBodyMaxBytes          int64           `json:"checkBodyMaxBytes,omitempty"`          // Max body bytes to buffer and inspect (default: 65536)
-	CheckBodyPatterns          []string        `json:"checkBodyPatterns,omitempty"`          // Specific regex patterns to match against request body
-	Debug                      bool            `json:"debug,omitempty"`                      // Enable verbose debug logging to stdout/stderr
-	SecurityLog                bool            `json:"securityLog,omitempty"`                // Emit structured JSON security audit events (CrowdSec/SIEM compatible) on block
-	Response                   *ResponseConfig `json:"response,omitempty"`
+	TrustedProxies     []string        `json:"trustedProxies,omitempty"`
+	Methods            []string        `json:"methods,omitempty"` // HTTP verbs to inspect (defaults to ["GET"])
+	StatusCode         int             `json:"statusCode,omitempty"`
+	CustomResponseText string          `json:"customResponseText,omitempty"`
+	Mode               string          `json:"mode,omitempty"` // Convenience alias for response mode
+	CheckQuery         bool            `json:"checkQuery,omitempty"`
+	CheckHeaders       []string        `json:"checkHeaders,omitempty"`      // Optional headers to inspect (e.g. X-Forwarded-Uri, X-Rewrite-URL)
+	CheckBody          bool            `json:"checkBody,omitempty"`         // Enable inspecting incoming request bodies
+	CheckBodyMaxBytes  int64           `json:"checkBodyMaxBytes,omitempty"` // Max body bytes to buffer and inspect (default: 65536)
+	CheckBodyPatterns  []string        `json:"checkBodyPatterns,omitempty"` // Specific regex patterns to match against request body
+	Debug              bool            `json:"debug,omitempty"`             // Enable verbose debug logging to stdout/stderr
+	SecurityLog        bool            `json:"securityLog,omitempty"`       // Emit structured JSON security audit events (CrowdSec/SIEM compatible) on block
+	Response           *ResponseConfig `json:"response,omitempty"`
 }
 
 // CreateConfig creates the default plugin configuration.
@@ -124,7 +126,7 @@ func CreateConfig() *Config {
 		EnableDefaultAllowPatterns: true,
 		BlockPatterns:              []string{},
 		AllowPatterns:              []string{},
-		AllowedIPs:                []string{},
+		AllowedIPs:                 []string{},
 		TrustedProxies:             []string{},
 		Methods:                    []string{"GET"},
 		StatusCode:                 http.StatusForbidden,

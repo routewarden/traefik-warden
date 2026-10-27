@@ -263,3 +263,7 @@ go test -coverprofile=coverage.out ./... && go tool cover -func=coverage.out
 ## License
 
 This project is licensed under the [MIT License](LICENSE).
+
+## ASN allowlisting
+
+See [ASN allowlisting](ASN_ALLOWLIST.md) for configuration, routing snapshot generation, and security behavior.

@@ -81,6 +81,10 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 			BlockPatternsSnake              []string              `json:"block_patterns"`
 			AllowPatterns                   []string              `json:"allowPatterns"`
 			AllowPatternsSnake              []string              `json:"allow_patterns"`
+			AllowedASNs                     []string              `json:"allowedASNs"`
+			AllowedASNsSnake                []string              `json:"allowed_asns"`
+			ASNDB                           string                `json:"asnDB"`
+			ASNDBSnake                      string                `json:"asn_db"`
 			AllowedIPs                      []string              `json:"allowedIps"`
 			AllowedIPsSnake                 []string              `json:"allowed_ips"`
 			TrustedProxies                  []string              `json:"trustedProxies"`
@@ -136,6 +140,14 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 			fileCfg.AllowPatterns = scf.AllowPatterns
 		} else if len(scf.AllowPatternsSnake) > 0 {
 			fileCfg.AllowPatterns = scf.AllowPatternsSnake
+		}
+		fileCfg.AllowedASNs = scf.AllowedASNs
+		if scf.AllowedASNsSnake != nil {
+			fileCfg.AllowedASNs = scf.AllowedASNsSnake
+		}
+		fileCfg.ASNDB = scf.ASNDB
+		if scf.ASNDBSnake != "" {
+			fileCfg.ASNDB = scf.ASNDBSnake
 		}
 		if len(scf.AllowedIPs) > 0 {
 			fileCfg.AllowedIPs = scf.AllowedIPs
@@ -275,6 +287,12 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		}
 		if len(config.AllowPatterns) > 0 {
 			fileCfg.AllowPatterns = config.AllowPatterns
+		}
+		if config.AllowedASNs != nil {
+			fileCfg.AllowedASNs = config.AllowedASNs
+		}
+		if config.ASNDB != "" {
+			fileCfg.ASNDB = config.ASNDB
 		}
 		if len(config.AllowedIPs) > 0 {
 			fileCfg.AllowedIPs = config.AllowedIPs
@@ -431,6 +449,11 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 	}
 
 	ipFilter, err := NewIPFilter(config.AllowedIPs, config.TrustedProxies)
+	if err != nil {
+		return nil, fmt.Errorf("routewarden [%s]: %w", name, err)
+	}
+
+	ipFilter.asn, err = NewASNFilter(config.AllowedASNs, config.ASNDB)
 	if err != nil {
 		return nil, fmt.Errorf("routewarden [%s]: %w", name, err)
 	}
@@ -751,4 +774,3 @@ func (b *bodyReadCloser) Close() error {
 	}
 	return nil
 }
-
