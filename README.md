@@ -66,7 +66,7 @@ services:
       # Attach routewarden globally to entryPoint 'web'
       - "--entrypoints.web.http.middlewares=warden-shield@docker"
       - "--experimental.plugins.routewarden.modulename=github.com/routewarden/traefik-warden"
-      - "--experimental.plugins.routewarden.version=v1.6.0"
+      - "--experimental.plugins.routewarden.version=v1.7.0"
     ports:
       - "80:80"
     volumes:
@@ -117,7 +117,7 @@ experimental:
   plugins:
     routewarden:
       moduleName: github.com/routewarden/traefik-warden
-      version: v1.6.0
+      version: v1.7.0
 ```
 
 #### 2. Dynamic Configuration (`dynamic_conf.yml`)
@@ -263,3 +263,7 @@ go test -coverprofile=coverage.out ./... && go tool cover -func=coverage.out
 ## License
 
 This project is licensed under the [MIT License](LICENSE).
+
+## ASN allowlisting
+
+See [ASN allowlisting](ASN_ALLOWLIST.md) for configuration, routing snapshot generation, and security behavior.

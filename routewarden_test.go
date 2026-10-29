@@ -2635,3 +2635,205 @@ func TestCaptchaConfig_SiteKeySnakeCase(t *testing.T) {
 	}
 }
 
+func TestRouteWarden_URIFragmentAnchorBypassPrevented(t *testing.T) {
+	cfg := traefik_warden.CreateConfig()
+	cfg.EnableDefaultPatterns = true
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	handler, err := traefik_warden.New(context.Background(), next, cfg, "frag-test")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	testPaths := []string{
+		"/server-status#admin",
+		"/server-status#section",
+		"/server.key#frag",
+		"/.env#local",
+		"/phpinfo.php#info",
+	}
+
+	for _, p := range testPaths {
+		t.Run(p, func(t *testing.T) {
+			passedThrough := false
+			req := httptest.NewRequest(http.MethodGet, p, nil)
+			req.RequestURI = p
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+
+			if rec.Code == http.StatusOK {
+				passedThrough = true
+			}
+			if passedThrough {
+				t.Errorf("expected request %q with fragment to be blocked by DefaultBlockPatterns, but it passed through", p)
+			}
+			if rec.Code != http.StatusForbidden {
+				t.Errorf("expected HTTP 403 for %q, got %d", p, rec.Code)
+			}
+		})
+	}
+}
+
+func TestRouteWarden_CheckHeaders_MultiValue(t *testing.T) {
+	cfg := traefik_warden.CreateConfig()
+	cfg.EnableDefaultPatterns = true
+	cfg.CheckHeaders = []string{"X-Rewrite-URL", "X-Custom-Path"}
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	handler, err := traefik_warden.New(context.Background(), next, cfg, "hdr-test")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// 1. Duplicate HTTP headers
+	req := httptest.NewRequest(http.MethodGet, "/index.html", nil)
+	req.Header.Add("X-Rewrite-URL", "/safe/path")
+	req.Header.Add("X-Rewrite-URL", "/.env")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("expected duplicate header with /.env to be blocked (403), got %d", rec.Code)
+	}
+
+	// 2. Comma-separated header
+	reqComma := httptest.NewRequest(http.MethodGet, "/index.html", nil)
+	reqComma.Header.Set("X-Custom-Path", "/safe/path, /.env")
+	recComma := httptest.NewRecorder()
+	handler.ServeHTTP(recComma, reqComma)
+	if recComma.Code != http.StatusForbidden {
+		t.Errorf("expected comma-separated header with /.env to be blocked (403), got %d", recComma.Code)
+	}
+}
+
+func TestResponseHandler_NilSafety(t *testing.T) {
+	h, err := traefik_warden.NewResponseHandler(nil, 403, "", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should not panic with nil w
+	h.ServeBlockedRequest(nil, httptest.NewRequest(http.MethodGet, "/test", nil))
+
+	// Should not panic with nil req
+	rec := httptest.NewRecorder()
+	h.ServeBlockedRequest(rec, nil)
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("expected 403, got %d", rec.Code)
+	}
+}
+
+func TestRouteWarden_CheckQuery_KeysWithSensitiveNames(t *testing.T) {
+	cfg := traefik_warden.CreateConfig()
+	cfg.EnableDefaultPatterns = true
+	cfg.CheckQuery = true
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	handler, err := traefik_warden.New(context.Background(), next, cfg, "warden-query-keys")
+	if err != nil {
+		t.Fatalf("failed to create plugin: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/search?.env=1", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("expected query key .env to be blocked (403), got %d", rec.Code)
+	}
+}
+
+func TestRouteWarden_BracketedIPv6AllowedIPs(t *testing.T) {
+	cfg := traefik_warden.CreateConfig()
+	cfg.EnableDefaultPatterns = true
+	cfg.AllowedIPs = []string{"[2001:db8::]/32", "[2001:db9::cafe]"}
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	handler, err := traefik_warden.New(context.Background(), next, cfg, "warden-ipv6-allowed")
+	if err != nil {
+		t.Fatalf("failed to create plugin: %v", err)
+	}
+
+	// 1. Allowed IP accessing blocked sensitive pattern /.env
+	reqAllowed := httptest.NewRequest(http.MethodGet, "/.env", nil)
+	reqAllowed.RemoteAddr = "[2001:db8::1]:54321"
+	recAllowed := httptest.NewRecorder()
+	handler.ServeHTTP(recAllowed, reqAllowed)
+	if recAllowed.Code != http.StatusOK {
+		t.Errorf("expected allowed IPv6 to bypass /.env block, got %d", recAllowed.Code)
+	}
+
+	// 2. Unallowed IP accessing blocked sensitive pattern /.env
+	reqDenied := httptest.NewRequest(http.MethodGet, "/.env", nil)
+	reqDenied.RemoteAddr = "[2001:dba::1]:54321"
+	recDenied := httptest.NewRecorder()
+	handler.ServeHTTP(recDenied, reqDenied)
+	if recDenied.Code != http.StatusForbidden {
+		t.Errorf("expected unallowed IPv6 accessing /.env to be blocked (403), got %d", recDenied.Code)
+	}
+}
+
+func TestRouteWarden_CheckQuery_MalformedEncodingEvasion(t *testing.T) {
+	cfg := traefik_warden.CreateConfig()
+	cfg.EnableDefaultPatterns = true
+	cfg.CheckQuery = true
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	handler, err := traefik_warden.New(context.Background(), next, cfg, "warden-malformed-query")
+	if err != nil {
+		t.Fatalf("failed to create plugin: %v", err)
+	}
+
+	// An attacker provides malformed percent encoding in the first param to break url.ParseQuery,
+	// followed by a sensitive pattern in the second param.
+	req := httptest.NewRequest(http.MethodGet, "/search?broken=%ZZ&target=/.env", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("expected malformed query containing /.env to be blocked (403), got %d", rec.Code)
+	}
+}
+
+func TestRouteWarden_CheckBody_HttpNoBodyPreservation(t *testing.T) {
+	cfg := traefik_warden.CreateConfig()
+	cfg.CheckBody = true
+	cfg.CheckBodyPatterns = []string{"(?i)evil_payload"}
+
+	var capturedBody io.ReadCloser
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedBody = r.Body
+		w.WriteHeader(http.StatusOK)
+	})
+
+	handler, err := traefik_warden.New(context.Background(), next, cfg, "warden-nobody")
+	if err != nil {
+		t.Fatalf("failed to create plugin: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/safe", http.NoBody)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", rec.Code)
+	}
+	if capturedBody != http.NoBody {
+		t.Errorf("expected req.Body to remain http.NoBody, got %T (%v)", capturedBody, capturedBody)
+	}
+}
+
+
+

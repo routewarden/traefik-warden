@@ -9,6 +9,7 @@ import (
 
 // IPFilter evaluates incoming requests against an IP or CIDR subnet whitelist.
 type IPFilter struct {
+	asn         *ASNFilter
 	allowedIPs  []net.IP
 	allowedNets []*net.IPNet
 	// trustedNets is the set of upstream proxies (e.g. Traefik, load-balancers) whose
@@ -82,6 +83,15 @@ func NewIPFilter(allowedIPs []string, trustedProxies []string) (*IPFilter, error
 
 // IsAllowed returns true if the client IP in the request matches any whitelisted IP or subnet.
 func (f *IPFilter) IsAllowed(req *http.Request) bool {
+	if f.asn != nil {
+		address := cleanIP(req.RemoteAddr)
+		if len(f.trustedNets) > 0 {
+			address = f.extractClientIP(req)
+		}
+		if f.asn.IsAllowed(address) {
+			return true
+		}
+	}
 	if len(f.allowedIPs) == 0 && len(f.allowedNets) == 0 {
 		return false
 	}
@@ -147,14 +157,16 @@ func (f *IPFilter) extractClientIP(req *http.Request) string {
 		// The request arrived from a trusted proxy: honour forwarding headers.
 		if xff := req.Header.Get("X-Forwarded-For"); xff != "" {
 			parts := strings.Split(xff, ",")
-			ip := cleanIP(parts[0])
-			if ip != "" {
-				return ip
+			for _, part := range parts {
+				ip := cleanIP(part)
+				if net.ParseIP(ip) != nil {
+					return ip
+				}
 			}
 		}
 		if xrip := req.Header.Get("X-Real-IP"); xrip != "" {
 			ip := cleanIP(xrip)
-			if ip != "" {
+			if net.ParseIP(ip) != nil {
 				return ip
 			}
 		}
@@ -168,19 +180,24 @@ func (f *IPFilter) extractClientIP(req *http.Request) string {
 // This function unconditionally trusts X-Forwarded-For and is intended for logging / diagnostics
 // only. For security-critical decisions (IP whitelisting) use IPFilter.extractClientIP instead.
 func ExtractClientIP(req *http.Request) string {
-	// Check X-Forwarded-For first (left-most entry is the originating client).
+	if req == nil {
+		return ""
+	}
+	// Check X-Forwarded-For first (first valid IP is the originating client).
 	if xff := req.Header.Get("X-Forwarded-For"); xff != "" {
 		parts := strings.Split(xff, ",")
-		ip := cleanIP(parts[0])
-		if ip != "" {
-			return ip
+		for _, part := range parts {
+			ip := cleanIP(part)
+			if net.ParseIP(ip) != nil {
+				return ip
+			}
 		}
 	}
 
 	// Check X-Real-IP header
 	if xrip := req.Header.Get("X-Real-IP"); xrip != "" {
 		ip := cleanIP(xrip)
-		if ip != "" {
+		if net.ParseIP(ip) != nil {
 			return ip
 		}
 	}
@@ -208,4 +225,3 @@ func cleanIP(raw string) string {
 	}
 	return raw
 }
-
