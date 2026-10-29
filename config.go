@@ -97,7 +97,12 @@ type Config struct {
 	BlockPatterns              []string `json:"blockPatterns,omitempty"`
 	AllowPatterns              []string `json:"allowPatterns,omitempty"`
 	AllowedASNs                []string `json:"allowedASNs,omitempty"`
+	BlockedASNs                []string `json:"blockedASNs,omitempty"`
 	ASNDB                      string   `json:"asnDB,omitempty"`
+	BlockAIBots                bool     `json:"blockAIBots,omitempty"`
+	AIBotProfile               string   `json:"aiBotProfile,omitempty"`
+	BlockUserAgents            []string `json:"blockUserAgents,omitempty"`
+	AllowUserAgents            []string `json:"allowUserAgents,omitempty"`
 	AllowedIPs                 []string `json:"allowedIps,omitempty"` // Whitelist of IPs or CIDR subnets exempt from blocking
 	// TrustedProxies lists IPs/CIDRs of upstream proxies (e.g. Traefik, load-balancers) whose
 	// X-Forwarded-For and X-Real-IP headers are trusted when resolving the real client IP.

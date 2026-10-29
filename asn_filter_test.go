@@ -129,3 +129,52 @@ func TestASNMiddleware(t *testing.T) {
 		}
 	}
 }
+
+func TestASNBlockedMatching(t *testing.T) {
+	path := asnTestDB(t)
+	// AS64501 is blocked (8.8.8.0/24), AS64500 is allowed (8.0.0.0/8)
+	f, err := NewASNFilterEx([]string{"as64500"}, []string{"64501"}, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 8.8.8.8 belongs to AS64501 (blocked)
+	blocked, asn := f.IsBlocked("8.8.8.8")
+	if !blocked || asn != 64501 {
+		t.Errorf("expected 8.8.8.8 to be blocked with ASN 64501, got %v (%d)", blocked, asn)
+	}
+
+	// 8.1.2.3 belongs to AS64500 (allowed, not blocked)
+	blocked, _ = f.IsBlocked("8.1.2.3")
+	if blocked {
+		t.Errorf("expected 8.1.2.3 to not be blocked")
+	}
+
+	cfg := CreateConfig()
+	cfg.BlockedASNs = []string{"AS64501"}
+	cfg.ASNDB = path
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) })
+
+	handler, err := New(context.Background(), next, cfg, "blocked-asn-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Benign path (/public/index.html) from blocked ASN must be 403
+	req := httptest.NewRequest("GET", "http://example.com/public/index.html", nil)
+	req.RemoteAddr = "8.8.8.8:1234"
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != 403 {
+		t.Errorf("expected 403 for blocked ASN on benign path, got %d", rec.Code)
+	}
+
+	// Non-blocked ASN passes through (200)
+	reqOK := httptest.NewRequest("GET", "http://example.com/public/index.html", nil)
+	reqOK.RemoteAddr = "8.1.2.3:1234"
+	recOK := httptest.NewRecorder()
+	handler.ServeHTTP(recOK, reqOK)
+	if recOK.Code != 200 {
+		t.Errorf("expected 200 for allowed origin on benign path, got %d", recOK.Code)
+	}
+}

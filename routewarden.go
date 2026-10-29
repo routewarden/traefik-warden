@@ -25,6 +25,10 @@ type RouteWarden struct {
 	blockRegexes      []*regexp.Regexp
 	allowRegexes      []*regexp.Regexp
 	bodyRegexes       []*regexp.Regexp
+	blockUAPatterns   []*regexp.Regexp
+	allowUAPatterns   []*regexp.Regexp
+	blockAIBots       bool
+	aiBotProfile      string
 	ipFilter          *IPFilter
 	checkQuery        bool
 	checkHeaders      []string
@@ -83,8 +87,18 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 			AllowPatternsSnake              []string              `json:"allow_patterns"`
 			AllowedASNs                     []string              `json:"allowedASNs"`
 			AllowedASNsSnake                []string              `json:"allowed_asns"`
+			BlockedASNs                     []string              `json:"blockedASNs"`
+			BlockedASNsSnake                []string              `json:"blocked_asns"`
 			ASNDB                           string                `json:"asnDB"`
 			ASNDBSnake                      string                `json:"asn_db"`
+			BlockAIBots                     *bool                 `json:"blockAIBots"`
+			BlockAIBotsSnake                *bool                 `json:"block_ai_bots"`
+			AIBotProfile                    *string               `json:"aiBotProfile"`
+			AIBotProfileSnake               *string               `json:"ai_bot_profile"`
+			BlockUserAgents                 []string              `json:"blockUserAgents"`
+			BlockUserAgentsSnake            []string              `json:"block_user_agents"`
+			AllowUserAgents                 []string              `json:"allowUserAgents"`
+			AllowUserAgentsSnake            []string              `json:"allow_user_agents"`
 			AllowedIPs                      []string              `json:"allowedIps"`
 			AllowedIPsSnake                 []string              `json:"allowed_ips"`
 			TrustedProxies                  []string              `json:"trustedProxies"`
@@ -146,9 +160,34 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		} else if len(scf.AllowedASNsSnake) > 0 {
 			fileCfg.AllowedASNs = scf.AllowedASNsSnake
 		}
+		if len(scf.BlockedASNs) > 0 {
+			fileCfg.BlockedASNs = scf.BlockedASNs
+		} else if len(scf.BlockedASNsSnake) > 0 {
+			fileCfg.BlockedASNs = scf.BlockedASNsSnake
+		}
 		fileCfg.ASNDB = scf.ASNDB
 		if scf.ASNDBSnake != "" {
 			fileCfg.ASNDB = scf.ASNDBSnake
+		}
+		if scf.BlockAIBots != nil {
+			fileCfg.BlockAIBots = *scf.BlockAIBots
+		} else if scf.BlockAIBotsSnake != nil {
+			fileCfg.BlockAIBots = *scf.BlockAIBotsSnake
+		}
+		if scf.AIBotProfile != nil {
+			fileCfg.AIBotProfile = *scf.AIBotProfile
+		} else if scf.AIBotProfileSnake != nil {
+			fileCfg.AIBotProfile = *scf.AIBotProfileSnake
+		}
+		if len(scf.BlockUserAgents) > 0 {
+			fileCfg.BlockUserAgents = scf.BlockUserAgents
+		} else if len(scf.BlockUserAgentsSnake) > 0 {
+			fileCfg.BlockUserAgents = scf.BlockUserAgentsSnake
+		}
+		if len(scf.AllowUserAgents) > 0 {
+			fileCfg.AllowUserAgents = scf.AllowUserAgents
+		} else if len(scf.AllowUserAgentsSnake) > 0 {
+			fileCfg.AllowUserAgents = scf.AllowUserAgentsSnake
 		}
 		if len(scf.AllowedIPs) > 0 {
 			fileCfg.AllowedIPs = scf.AllowedIPs
@@ -292,8 +331,23 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		if config.AllowedASNs != nil {
 			fileCfg.AllowedASNs = config.AllowedASNs
 		}
+		if config.BlockedASNs != nil {
+			fileCfg.BlockedASNs = config.BlockedASNs
+		}
 		if config.ASNDB != "" {
 			fileCfg.ASNDB = config.ASNDB
+		}
+		if config.BlockAIBots {
+			fileCfg.BlockAIBots = config.BlockAIBots
+		}
+		if config.AIBotProfile != "" {
+			fileCfg.AIBotProfile = config.AIBotProfile
+		}
+		if len(config.BlockUserAgents) > 0 {
+			fileCfg.BlockUserAgents = config.BlockUserAgents
+		}
+		if len(config.AllowUserAgents) > 0 {
+			fileCfg.AllowUserAgents = config.AllowUserAgents
 		}
 		if len(config.AllowedIPs) > 0 {
 			fileCfg.AllowedIPs = config.AllowedIPs
@@ -462,9 +516,33 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		return nil, fmt.Errorf("routewarden [%s]: %w", name, err)
 	}
 
-	ipFilter.asn, err = NewASNFilter(config.AllowedASNs, config.ASNDB)
+	ipFilter.asn, err = NewASNFilterEx(config.AllowedASNs, config.BlockedASNs, config.ASNDB)
 	if err != nil {
 		return nil, fmt.Errorf("routewarden [%s]: %w", name, err)
+	}
+
+	compiledBlockUARegexes := make([]*regexp.Regexp, 0, len(config.BlockUserAgents))
+	for _, p := range config.BlockUserAgents {
+		if strings.TrimSpace(p) == "" {
+			continue
+		}
+		re, err := regexp.Compile(p)
+		if err != nil {
+			return nil, fmt.Errorf("routewarden [%s]: invalid block user agent regex pattern %q: %w", name, p, err)
+		}
+		compiledBlockUARegexes = append(compiledBlockUARegexes, re)
+	}
+
+	compiledAllowUARegexes := make([]*regexp.Regexp, 0, len(config.AllowUserAgents))
+	for _, p := range config.AllowUserAgents {
+		if strings.TrimSpace(p) == "" {
+			continue
+		}
+		re, err := regexp.Compile(p)
+		if err != nil {
+			return nil, fmt.Errorf("routewarden [%s]: invalid allow user agent regex pattern %q: %w", name, p, err)
+		}
+		compiledAllowUARegexes = append(compiledAllowUARegexes, re)
 	}
 
 	respConfig := config.Response
@@ -516,6 +594,10 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		blockRegexes:      compiledBlockRegexes,
 		allowRegexes:      compiledAllowRegexes,
 		bodyRegexes:       compiledBodyRegexes,
+		blockUAPatterns:   compiledBlockUARegexes,
+		allowUAPatterns:   compiledAllowUARegexes,
+		blockAIBots:       config.BlockAIBots,
+		aiBotProfile:      config.AIBotProfile,
 		ipFilter:          ipFilter,
 		checkQuery:        config.CheckQuery,
 		checkHeaders:      cleanedHeaders,
@@ -618,6 +700,58 @@ func (rw *RouteWarden) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		rw.logDebug("client IP %s is whitelisted, allowing request", rw.extractClientIP(req))
 		rw.next.ServeHTTP(w, req)
 		return
+	}
+
+	// Blocked ASN check
+	if rw.ipFilter != nil {
+		if isBlockedASN, asnNum := rw.ipFilter.IsBlockedASN(req); isBlockedASN {
+			clientIP := rw.extractClientIP(req)
+			rw.logDebug("client IP %s is in blocked ASN %d, dropping request", clientIP, asnNum)
+			rw.logSecurityEvent(req, fmt.Sprintf("AS%d", asnNum), fmt.Sprintf("AS%d", asnNum), "asn_blocked")
+			rw.responseHandler.ServeBlockedRequest(w, req)
+			return
+		}
+	}
+
+	// User-Agent & AI Bot Inspection
+	ua := req.UserAgent()
+	uaAllowed := false
+	for _, re := range rw.allowUAPatterns {
+		if re.MatchString(ua) {
+			uaAllowed = true
+			break
+		}
+	}
+
+	if !uaAllowed {
+		uaBlocked := false
+		uaPattern := ""
+		uaReason := ""
+
+		for _, re := range rw.blockUAPatterns {
+			if re.MatchString(ua) {
+				uaBlocked = true
+				uaPattern = re.String()
+				uaReason = "user_agent_blocked"
+				break
+			}
+		}
+
+		if !uaBlocked && rw.blockAIBots {
+			if matched, botType := MatchAIBot(ua, rw.aiBotProfile); matched {
+				uaBlocked = true
+				uaPattern = botType
+				uaReason = "ai_bot_blocked"
+			}
+		}
+
+		if uaBlocked {
+			clientIP := rw.extractClientIP(req)
+			rw.logDebug("client %s User-Agent %q blocked by pattern %q (reason: %s)", clientIP, ua, uaPattern, uaReason)
+			rw.logSecurityEvent(req, ua, uaPattern, uaReason)
+			rw.responseHandler.ServeBlockedRequest(w, req)
+			return
+		}
 	}
 
 	// Canonicalize and inspect paths with anti-evasion protections

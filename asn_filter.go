@@ -14,6 +14,7 @@ import (
 type ASNFilter struct {
 	roots   [2]*asnNode
 	allowed map[uint32]bool
+	blocked map[uint32]bool
 }
 type asnNode struct {
 	children [2]*asnNode
@@ -41,10 +42,18 @@ func parseASN(value string) (uint32, error) {
 }
 
 // NewASNFilter validates and loads the database once, outside the request path.
-// With no allowed ASNs the feature is disabled and no database is read.
+// With no allowed or blocked ASNs the feature is disabled and no database is read.
 func NewASNFilter(allowed []string, path string) (*ASNFilter, error) {
-	f := &ASNFilter{allowed: make(map[uint32]bool)}
-	if len(allowed) == 0 {
+	return NewASNFilterEx(allowed, nil, path)
+}
+
+// NewASNFilterEx supports both allowed and blocked ASN lists.
+func NewASNFilterEx(allowed []string, blocked []string, path string) (*ASNFilter, error) {
+	f := &ASNFilter{
+		allowed: make(map[uint32]bool),
+		blocked: make(map[uint32]bool),
+	}
+	if len(allowed) == 0 && len(blocked) == 0 {
 		return f, nil
 	}
 	for _, value := range allowed {
@@ -54,8 +63,15 @@ func NewASNFilter(allowed []string, path string) (*ASNFilter, error) {
 		}
 		f.allowed[n] = true
 	}
+	for _, value := range blocked {
+		n, err := parseASN(value)
+		if err != nil {
+			return nil, err
+		}
+		f.blocked[n] = true
+	}
 	if strings.TrimSpace(path) == "" {
-		return nil, fmt.Errorf("asnDB/asn_db is required with allowed ASNs")
+		return nil, fmt.Errorf("asnDB/asn_db is required with ASN allow/block lists")
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -91,6 +107,11 @@ func NewASNFilter(allowed []string, path string) (*ASNFilter, error) {
 		}
 	}
 	for n := range f.allowed {
+		if !found[n] {
+			return nil, fmt.Errorf("ASN %d has no prefixes in database", n)
+		}
+	}
+	for n := range f.blocked {
 		if !found[n] {
 			return nil, fmt.Errorf("ASN %d has no prefixes in database", n)
 		}
@@ -162,5 +183,17 @@ func (f *ASNFilter) Lookup(address string) uint32 {
 
 // IsAllowed never grants a bypass to unknown or malformed addresses.
 func (f *ASNFilter) IsAllowed(address string) bool {
-	return f != nil && f.allowed[f.Lookup(address)]
+	return f != nil && len(f.allowed) > 0 && f.allowed[f.Lookup(address)]
+}
+
+// IsBlocked returns true and the origin ASN number if the address belongs to a blocked ASN.
+func (f *ASNFilter) IsBlocked(address string) (bool, uint32) {
+	if f == nil || len(f.blocked) == 0 {
+		return false, 0
+	}
+	n := f.Lookup(address)
+	if n != 0 && f.blocked[n] {
+		return true, n
+	}
+	return false, 0
 }

@@ -2835,5 +2835,100 @@ func TestRouteWarden_CheckBody_HttpNoBodyPreservation(t *testing.T) {
 	}
 }
 
+func TestRouteWarden_BlockAIBots(t *testing.T) {
+	cfg := traefik_warden.CreateConfig()
+	cfg.BlockAIBots = true
+	cfg.AIBotProfile = "train_only"
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	handler, err := traefik_warden.New(context.Background(), next, cfg, "ai-bot-test")
+	if err != nil {
+		t.Fatalf("failed to create plugin: %v", err)
+	}
+
+	// 1. Normal Chrome Browser -> 200
+	reqBrowser := httptest.NewRequest(http.MethodGet, "/articles/post-1", nil)
+	reqBrowser.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
+	recBrowser := httptest.NewRecorder()
+	handler.ServeHTTP(recBrowser, reqBrowser)
+	if recBrowser.Code != http.StatusOK {
+		t.Errorf("expected normal browser to pass (200), got %d", recBrowser.Code)
+	}
+
+	// 2. GPTBot on train_only -> 403
+	reqGPT := httptest.NewRequest(http.MethodGet, "/articles/post-1", nil)
+	reqGPT.Header.Set("User-Agent", "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; GPTBot/1.2; +https://openai.com/gptbot)")
+	recGPT := httptest.NewRecorder()
+	handler.ServeHTTP(recGPT, reqGPT)
+	if recGPT.Code != http.StatusForbidden {
+		t.Errorf("expected GPTBot to be blocked (403), got %d", recGPT.Code)
+	}
+
+	// 3. Bytespider on train_only -> 403
+	reqByte := httptest.NewRequest(http.MethodGet, "/products/item-123", nil)
+	reqByte.Header.Set("User-Agent", "Mozilla/5.0 (compatible; Bytespider; spider-feedback@bytedance.com)")
+	recByte := httptest.NewRecorder()
+	handler.ServeHTTP(recByte, reqByte)
+	if recByte.Code != http.StatusForbidden {
+		t.Errorf("expected Bytespider to be blocked (403), got %d", recByte.Code)
+	}
+
+	// 4. PerplexityBot on train_only -> allowed (200)
+	reqPerp := httptest.NewRequest(http.MethodGet, "/articles/post-1", nil)
+	reqPerp.Header.Set("User-Agent", "Mozilla/5.0 (compatible; PerplexityBot/1.0; +https://perplexity.ai/perplexitybot)")
+	recPerp := httptest.NewRecorder()
+	handler.ServeHTTP(recPerp, reqPerp)
+	if recPerp.Code != http.StatusOK {
+		t.Errorf("expected PerplexityBot to be allowed under train_only (200), got %d", recPerp.Code)
+	}
+
+	// 5. PerplexityBot on all profile -> 403
+	cfgAll := traefik_warden.CreateConfig()
+	cfgAll.BlockAIBots = true
+	cfgAll.AIBotProfile = "all"
+	handlerAll, _ := traefik_warden.New(context.Background(), next, cfgAll, "ai-bot-all")
+	recPerpAll := httptest.NewRecorder()
+	handlerAll.ServeHTTP(recPerpAll, reqPerp)
+	if recPerpAll.Code != http.StatusForbidden {
+		t.Errorf("expected PerplexityBot to be blocked under 'all' profile (403), got %d", recPerpAll.Code)
+	}
+}
+
+func TestRouteWarden_CustomUserAgents(t *testing.T) {
+	cfg := traefik_warden.CreateConfig()
+	cfg.BlockUserAgents = []string{`(?i)ScraperBot`}
+	cfg.AllowUserAgents = []string{`(?i)AllowedPartnerBot`}
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	handler, err := traefik_warden.New(context.Background(), next, cfg, "ua-test")
+	if err != nil {
+		t.Fatalf("failed to create plugin: %v", err)
+	}
+
+	// Blocked custom agent
+	reqBlocked := httptest.NewRequest(http.MethodGet, "/public/docs", nil)
+	reqBlocked.Header.Set("User-Agent", "MyCustomScraperBot/1.0")
+	recBlocked := httptest.NewRecorder()
+	handler.ServeHTTP(recBlocked, reqBlocked)
+	if recBlocked.Code != http.StatusForbidden {
+		t.Errorf("expected custom scraper to be blocked (403), got %d", recBlocked.Code)
+	}
+
+	// Allowed custom agent
+	reqAllowed := httptest.NewRequest(http.MethodGet, "/public/docs", nil)
+	reqAllowed.Header.Set("User-Agent", "AllowedPartnerBot/2.0")
+	recAllowed := httptest.NewRecorder()
+	handler.ServeHTTP(recAllowed, reqAllowed)
+	if recAllowed.Code != http.StatusOK {
+		t.Errorf("expected allowed agent to pass through (200), got %d", recAllowed.Code)
+	}
+}
+
 
 
