@@ -12,9 +12,12 @@ import (
 func ExtractCandidatePaths(rawPath, pathStr, requestURI string) []string {
 	pathsToCheck := []string{path.Clean(pathStr)}
 
-	// 1. Add RequestURI path before query to catch raw gateway discrepancies
+	// 1. Add RequestURI path before query and fragment to catch raw gateway discrepancies
 	rawURIPath := requestURI
 	if idx := strings.IndexByte(rawURIPath, '?'); idx != -1 {
+		rawURIPath = rawURIPath[:idx]
+	}
+	if idx := strings.IndexByte(rawURIPath, '#'); idx != -1 {
 		rawURIPath = rawURIPath[:idx]
 	}
 	if rawURIPath != "" {
@@ -71,6 +74,13 @@ func ExtractCandidatePaths(rawPath, pathStr, requestURI string) []string {
 	for _, p := range append([]string{}, pathsToCheck...) {
 		if strings.ContainsRune(p, '\x00') {
 			pathsToCheck = append(pathsToCheck, path.Clean(strings.ReplaceAll(p, "\x00", "")))
+		}
+	}
+
+	// 7. Strip embedded URI fragments (#) to prevent regex anchor evasion
+	for _, p := range append([]string{}, pathsToCheck...) {
+		if before, _, ok := strings.Cut(p, "#"); ok {
+			pathsToCheck = append(pathsToCheck, path.Clean(before))
 		}
 	}
 

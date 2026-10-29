@@ -579,6 +579,21 @@ func TestResponseHandler_Proxy(t *testing.T) {
 	if rrEmpty.Code != http.StatusBadGateway {
 		t.Errorf("expected 502 for unconfigured proxy, got %d", rrEmpty.Code)
 	}
+
+	// 4. Test mirror mode proxy initialization
+	handlerMirror, errMirror := traefik_warden.NewResponseHandler(&traefik_warden.ResponseConfig{
+		Mode:     "mirror",
+		ProxyURL: "http://honeypot.local",
+	}, 0, "", false)
+	if errMirror != nil {
+		t.Fatalf("unexpected error for mirror mode: %v", errMirror)
+	}
+	handlerMirror.SetProxyHandlerForTest(proxy)
+	rrMirror := httptest.NewRecorder()
+	handlerMirror.ServeBlockedRequest(rrMirror, req)
+	if rrMirror.Code != http.StatusTeapot {
+		t.Errorf("expected 418 for mirror mode, got %d", rrMirror.Code)
+	}
 }
 
 type roundTripperFunc func(*http.Request) (*http.Response, error)
@@ -1076,6 +1091,157 @@ func TestResponseHandler_CRLF_Headers(t *testing.T) {
 		t.Errorf("expected raw CRLF header to be omitted")
 	}
 }
+
+func TestResponseHandler_EffectiveStatusCode(t *testing.T) {
+	tests := []struct {
+		name     string
+		cfg      *traefik_warden.ResponseConfig
+		topCode  int
+		silent   bool
+		expected int
+	}{
+		{
+			name:     "nil_config_fallback",
+			cfg:      nil,
+			topCode:  0,
+			expected: http.StatusForbidden,
+		},
+		{
+			name:     "silent_drop",
+			cfg:      &traefik_warden.ResponseConfig{Mode: "silentDrop"},
+			expected: 0,
+		},
+		{
+			name:     "redirect_default",
+			cfg:      &traefik_warden.ResponseConfig{Mode: "redirect"},
+			expected: http.StatusFound,
+		},
+		{
+			name:     "redirect_custom_301",
+			cfg:      &traefik_warden.ResponseConfig{Mode: "redirect", StatusCode: http.StatusMovedPermanently},
+			expected: http.StatusMovedPermanently,
+		},
+		{
+			name:     "fakesuccess_default_403",
+			cfg:      &traefik_warden.ResponseConfig{Mode: "fakeSuccess", StatusCode: http.StatusForbidden},
+			expected: http.StatusOK,
+		},
+		{
+			name:     "fakesuccess_custom_204",
+			cfg:      &traefik_warden.ResponseConfig{Mode: "fakeSuccess", StatusCode: http.StatusNoContent},
+			expected: http.StatusNoContent,
+		},
+		{
+			name:     "ratelimit_default_403",
+			cfg:      &traefik_warden.ResponseConfig{Mode: "rateLimit", StatusCode: http.StatusForbidden},
+			expected: http.StatusTooManyRequests,
+		},
+		{
+			name:     "ratelimit_zero",
+			cfg:      &traefik_warden.ResponseConfig{Mode: "rateLimit", StatusCode: 0},
+			expected: http.StatusTooManyRequests,
+		},
+		{
+			name:     "gzipbomb_default_zero",
+			cfg:      &traefik_warden.ResponseConfig{Mode: "gzipBomb"},
+			expected: http.StatusOK,
+		},
+		{
+			name:     "json_custom_404",
+			cfg:      &traefik_warden.ResponseConfig{Mode: "json", StatusCode: http.StatusNotFound},
+			expected: http.StatusNotFound,
+		},
+		{
+			name:     "text_default_zero",
+			cfg:      &traefik_warden.ResponseConfig{Mode: "text"},
+			expected: http.StatusForbidden,
+		},
+		{
+			name:     "fake_success_snake_case",
+			cfg:      &traefik_warden.ResponseConfig{Mode: "fake_success"},
+			expected: http.StatusOK,
+		},
+		{
+			name:     "rate_limit_snake_case",
+			cfg:      &traefik_warden.ResponseConfig{Mode: "rate_limit"},
+			expected: http.StatusTooManyRequests,
+		},
+		{
+			name:     "silent_drop_snake_case",
+			cfg:      &traefik_warden.ResponseConfig{Mode: "silent_drop"},
+			expected: 0,
+		},
+		{
+			name:     "gzip_bomb_snake_case",
+			cfg:      &traefik_warden.ResponseConfig{Mode: "gzip_bomb"},
+			expected: http.StatusOK,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h, err := traefik_warden.NewResponseHandler(tt.cfg, tt.topCode, "", tt.silent)
+			if err != nil {
+				t.Fatalf("unexpected error creating handler: %v", err)
+			}
+			got := h.EffectiveStatusCode()
+			if got != tt.expected {
+				t.Errorf("EffectiveStatusCode() = %d, want %d", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestResponseHandler_SnakeCaseModes(t *testing.T) {
+	t.Run("fake_success", func(t *testing.T) {
+		h, err := traefik_warden.NewResponseHandler(&traefik_warden.ResponseConfig{
+			Mode: "fake_success",
+		}, 0, "", false)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		req := httptest.NewRequest(http.MethodGet, "/.git?param=1", nil)
+		rec := httptest.NewRecorder()
+		h.ServeBlockedRequest(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Errorf("expected 200, got %d", rec.Code)
+		}
+		if !strings.Contains(rec.Body.String(), "ref: refs/heads/master") {
+			t.Errorf("expected git decoy response, got %s", rec.Body.String())
+		}
+	})
+
+	t.Run("rate_limit", func(t *testing.T) {
+		h, err := traefik_warden.NewResponseHandler(&traefik_warden.ResponseConfig{
+			Mode: "rate_limit",
+		}, 0, "", false)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		rec := httptest.NewRecorder()
+		h.ServeBlockedRequest(rec, req)
+		if rec.Code != http.StatusTooManyRequests {
+			t.Errorf("expected 429, got %d", rec.Code)
+		}
+	})
+
+	t.Run("nil_safety", func(t *testing.T) {
+		var h *traefik_warden.ResponseHandler
+		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		rec := httptest.NewRecorder()
+		defer func() {
+			if r := recover(); r != nil {
+				t.Fatalf("ServeBlockedRequest panicked on nil handler: %v", r)
+			}
+		}()
+		h.ServeBlockedRequest(rec, req)
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("expected 403 on nil handler, got %d", rec.Code)
+		}
+	})
+}
+
 
 
 

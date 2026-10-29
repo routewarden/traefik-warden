@@ -141,8 +141,9 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		} else if len(scf.AllowPatternsSnake) > 0 {
 			fileCfg.AllowPatterns = scf.AllowPatternsSnake
 		}
-		fileCfg.AllowedASNs = scf.AllowedASNs
-		if scf.AllowedASNsSnake != nil {
+		if len(scf.AllowedASNs) > 0 {
+			fileCfg.AllowedASNs = scf.AllowedASNs
+		} else if len(scf.AllowedASNsSnake) > 0 {
 			fileCfg.AllowedASNs = scf.AllowedASNsSnake
 		}
 		fileCfg.ASNDB = scf.ASNDB
@@ -324,7 +325,7 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		if config.CheckBody != defaultCfg.CheckBody {
 			fileCfg.CheckBody = config.CheckBody
 		}
-		if config.CheckBodyMaxBytes > 0 && config.CheckBodyMaxBytes != 65536 {
+		if config.CheckBodyMaxBytes > 0 {
 			fileCfg.CheckBodyMaxBytes = config.CheckBodyMaxBytes
 		}
 		if len(config.CheckBodyPatterns) > 0 {
@@ -394,12 +395,14 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 			methodsMap["POST"] = struct{}{}
 			methodsMap["PUT"] = struct{}{}
 			methodsMap["PATCH"] = struct{}{}
+			methodsMap["DELETE"] = struct{}{}
 		}
 	} else if len(config.Methods) == 1 && strings.EqualFold(config.Methods[0], "GET") && (config.CheckBody || len(config.CheckBodyPatterns) > 0) {
 		methodsMap["GET"] = struct{}{}
 		methodsMap["POST"] = struct{}{}
 		methodsMap["PUT"] = struct{}{}
 		methodsMap["PATCH"] = struct{}{}
+		methodsMap["DELETE"] = struct{}{}
 	} else {
 		for _, m := range config.Methods {
 			m = strings.ToUpper(strings.TrimSpace(m))
@@ -409,6 +412,12 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		}
 		if len(methodsMap) == 0 {
 			methodsMap["GET"] = struct{}{}
+			if config.CheckBody || len(config.CheckBodyPatterns) > 0 {
+				methodsMap["POST"] = struct{}{}
+				methodsMap["PUT"] = struct{}{}
+				methodsMap["PATCH"] = struct{}{}
+				methodsMap["DELETE"] = struct{}{}
+			}
 		}
 	}
 
@@ -551,13 +560,18 @@ func (rw *RouteWarden) logSecurityEvent(req *http.Request, matchedTarget string,
 			if rw.responseHandler.config.Mode != "" {
 				mode = rw.responseHandler.config.Mode
 			}
-			if rw.responseHandler.config.StatusCode != 0 {
-				statusCode = rw.responseHandler.config.StatusCode
-			}
+			statusCode = rw.responseHandler.EffectiveStatusCode()
 		}
 	}
 
-	event := map[string]interface{}{
+	verdict := "BLOCK"
+	if strings.EqualFold(mode, "tarpit") {
+		verdict = "TARPIT"
+	} else if strings.EqualFold(mode, "challenge") {
+		verdict = "CHALLENGE"
+	}
+
+	event := map[string]any{
 		"type":            "routewarden_block",
 		"timestamp":       time.Now().UTC().Format(time.RFC3339),
 		"level":           "warn",
@@ -569,6 +583,7 @@ func (rw *RouteWarden) logSecurityEvent(req *http.Request, matchedTarget string,
 		"pattern":         pattern,
 		"matched_pattern": pattern,
 		"action":          mode,
+		"verdict":         verdict,
 		"status_code":     statusCode,
 		"reason":          reason,
 		"user_agent":      req.UserAgent(),
@@ -587,13 +602,15 @@ func (rw *RouteWarden) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 
 	// Only inspect requests whose HTTP method matches configured verbs (default: GET)
-	_, hasWildcard := rw.methods["*"]
-	_, hasAll := rw.methods["ALL"]
-	_, matchesMethod := rw.methods[strings.ToUpper(req.Method)]
-	if !hasWildcard && !hasAll && !matchesMethod {
-		rw.logDebug("method %s not in inspected methods, bypassing", req.Method)
-		rw.next.ServeHTTP(w, req)
-		return
+	if len(rw.methods) > 0 {
+		_, hasWildcard := rw.methods["*"]
+		_, hasAll := rw.methods["ALL"]
+		_, matchesMethod := rw.methods[strings.ToUpper(req.Method)]
+		if !hasWildcard && !hasAll && !matchesMethod {
+			rw.logDebug("method %s not in inspected methods, bypassing", req.Method)
+			rw.next.ServeHTTP(w, req)
+			return
+		}
 	}
 
 	// Exempt whitelisted client IPs or CIDR subnets from blocking
@@ -673,29 +690,80 @@ func (rw *RouteWarden) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				}
 			}
 		}
+
+		// Also split raw query string on '&' and ';' to catch keys/values even when malformed encodings cause ParseQuery to error
+		for _, pair := range strings.FieldsFunc(req.URL.RawQuery, func(r rune) bool { return r == '&' || r == ';' }) {
+			if k, v, ok := strings.Cut(pair, "="); ok {
+				kCandidates := append([]string{k}, ExtractCandidatePaths("", k, k)...)
+				kCandidates = kCandidates[:len(kCandidates):len(kCandidates)]
+				for _, kc := range kCandidates {
+					if re := rw.findMatchingBlock(kc); re != nil {
+						rw.logDebug("query param key %q blocked by pattern %q", k, re.String())
+						rw.logSecurityEvent(req, k, re.String(), "query_param_blocked")
+						rw.responseHandler.ServeBlockedRequest(w, req)
+						return
+					}
+				}
+				vCandidates := append([]string{v}, ExtractCandidatePaths("", v, v)...)
+				vCandidates = vCandidates[:len(vCandidates):len(vCandidates)]
+				for _, vc := range vCandidates {
+					if re := rw.findMatchingBlock(vc); re != nil {
+						rw.logDebug("query param val %q blocked by pattern %q", v, re.String())
+						rw.logSecurityEvent(req, v, re.String(), "query_param_blocked")
+						rw.responseHandler.ServeBlockedRequest(w, req)
+						return
+					}
+				}
+			} else if pair != "" {
+				pCandidates := append([]string{pair}, ExtractCandidatePaths("", pair, pair)...)
+				pCandidates = pCandidates[:len(pCandidates):len(pCandidates)]
+				for _, pc := range pCandidates {
+					if re := rw.findMatchingBlock(pc); re != nil {
+						rw.logDebug("query item %q blocked by pattern %q", pair, re.String())
+						rw.logSecurityEvent(req, pair, re.String(), "query_param_blocked")
+						rw.responseHandler.ServeBlockedRequest(w, req)
+						return
+					}
+				}
+			}
+		}
 	}
 
 	// 4. Optional: Check specified forwarded/rewrite headers for path evasion & sensitive endpoints
 	if len(rw.checkHeaders) > 0 {
 		for _, headerName := range rw.checkHeaders {
-			headerVal := strings.TrimSpace(req.Header.Get(headerName))
-			if headerVal == "" {
-				continue
-			}
-			headerCandidates := append([]string{headerVal}, ExtractCandidatePaths("", headerVal, headerVal)...)
-			for _, hc := range headerCandidates {
-				if re := rw.findMatchingBlock(hc); re != nil {
-					rw.logDebug("header %q with value %q blocked by pattern %q", headerName, headerVal, re.String())
-					rw.logSecurityEvent(req, headerVal, re.String(), "header_blocked")
-					rw.responseHandler.ServeBlockedRequest(w, req)
-					return
+			for _, rawHeaderVal := range req.Header.Values(headerName) {
+				rawHeaderVal = strings.TrimSpace(rawHeaderVal)
+				if rawHeaderVal == "" {
+					continue
+				}
+				headerVals := []string{rawHeaderVal}
+				if strings.Contains(rawHeaderVal, ",") {
+					for _, part := range strings.Split(rawHeaderVal, ",") {
+						part = strings.TrimSpace(part)
+						if part != "" && part != rawHeaderVal {
+							headerVals = append(headerVals, part)
+						}
+					}
+				}
+
+				for _, headerVal := range headerVals {
+					headerCandidates := append([]string{headerVal}, ExtractCandidatePaths("", headerVal, headerVal)...)
+					for _, hc := range headerCandidates {
+						if re := rw.findMatchingBlock(hc); re != nil {
+							rw.logDebug("header %q with value %q blocked by pattern %q", headerName, headerVal, re.String())
+							rw.logSecurityEvent(req, rawHeaderVal, re.String(), "header_blocked")
+							rw.responseHandler.ServeBlockedRequest(w, req)
+							return
+						}
+					}
 				}
 			}
 		}
 	}
 
 	// 5. Optional: Check Request Body if enabled
-	if rw.checkBody && req.Body != nil {
+	if rw.checkBody && req.Body != nil && req.Body != http.NoBody {
 		maxBytes := rw.checkBodyMaxBytes
 		if maxBytes <= 0 {
 			maxBytes = 64 * 1024
@@ -731,9 +799,11 @@ func (rw *RouteWarden) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 					}
 				}
 			}
-		} else if origBody != nil {
+		} else {
+			// Restore already-read bytes so downstream sees a complete body even
+			// when io.ReadAll returned an error after partially consuming origBody.
 			req.Body = &bodyReadCloser{
-				Reader: bytes.NewReader(bodyBytes),
+				Reader: io.MultiReader(bytes.NewReader(bodyBytes), origBody),
 				Closer: origBody,
 			}
 		}

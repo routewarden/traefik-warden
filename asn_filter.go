@@ -133,7 +133,11 @@ func (f *ASNFilter) Lookup(address string) uint32 {
 	if host, _, err := net.SplitHostPort(address); err == nil {
 		address = host
 	}
-	ip := net.ParseIP(strings.Trim(address, "[]"))
+	address = strings.Trim(address, "[]")
+	if idx := strings.IndexByte(address, '%'); idx != -1 {
+		address = address[:idx]
+	}
+	ip := net.ParseIP(address)
 	if ip == nil {
 		return 0
 	}
