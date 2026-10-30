@@ -12,10 +12,12 @@ var (
 	reChromeVer   = regexp.MustCompile(`(?:Chrome|Chromium|Edg)/(\d+)`)
 
 	reScriptClientUA = regexp.MustCompile(`(?i)(` +
-		`python-requests|requests/|aiohttp|httpx|scrapy|urllib/|urllib3|tornado|` +
+		`python-requests|requests/|aiohttp|httpx|scrapy|urllib/|urllib3|tornado|curl-cffi|mechanize|` +
 		`axios|node-fetch|undici|got/\d+|superagent|needle/\d+|` +
 		`go-http-client|` +
 		`okhttp|apache-httpclient|java/\d+|httpclient|` +
+		`guzzlehttp|guzzle/\d+|` +
+		`reqwest/\d+|` +
 		`faraday|httparty|rest-client|` +
 		`curl/\d+|wget/\d+|libwww-perl|phantomjs|headlesschrome|puppeteer|playwright` +
 		`)`)
@@ -50,11 +52,12 @@ func DetectBrowserImpersonation(ua string, headers http.Header) (bool, string) {
 		return true, "missing_accept_encoding"
 	}
 
+	uaLower := strings.ToLower(uaTrim)
+
 	// 2. Client Hints platform cross-check (Sec-CH-UA-Platform vs User-Agent OS)
 	secPlatformRaw := headers.Get("Sec-CH-UA-Platform")
 	if secPlatformRaw != "" {
 		platform := strings.ToLower(strings.Trim(strings.TrimSpace(secPlatformRaw), "\""))
-		uaLower := strings.ToLower(uaTrim)
 
 		claimedWindows := strings.Contains(uaLower, "windows")
 		claimedMac := strings.Contains(uaLower, "macintosh") || strings.Contains(uaLower, "mac os x")
@@ -86,15 +89,49 @@ func DetectBrowserImpersonation(ua string, headers http.Header) (bool, string) {
 		}
 	}
 
-	// 3. Modern Chromium Fetch Metadata validation (Sec-Fetch-* headers)
+	// 3. Client Hints mobile cross-check (Sec-CH-UA-Mobile vs User-Agent form factor)
+	secMobileRaw := headers.Get("Sec-CH-UA-Mobile")
+	if secMobileRaw != "" {
+		secMobile := strings.Trim(strings.TrimSpace(secMobileRaw), "\"? ")
+		claimedMobile := strings.Contains(uaLower, "mobile") || strings.Contains(uaLower, "iphone") || strings.Contains(uaLower, "ipod") || strings.Contains(uaLower, "android")
+
+		if secMobile == "1" && !claimedMobile {
+			return true, "sec_ch_ua_mobile_mismatch"
+		}
+		if secMobile == "0" {
+			if strings.Contains(uaLower, "iphone") || strings.Contains(uaLower, "ipod") || (strings.Contains(uaLower, "android") && strings.Contains(uaLower, "mobile")) {
+				return true, "sec_ch_ua_mobile_mismatch"
+			}
+		}
+	}
+
+	// 4. Client Hints brand cross-check (Non-Chromium browsers forging Sec-CH-UA)
+	secCHUA := headers.Get("Sec-CH-UA")
+	if secCHUA != "" {
+		isFirefox := strings.Contains(uaLower, "firefox")
+		isSafariOnly := strings.Contains(uaLower, "safari") && !strings.Contains(uaLower, "chrome") && !strings.Contains(uaLower, "chromium") && !strings.Contains(uaLower, "edg")
+		if (isFirefox || isSafariOnly) && strings.Contains(strings.ToLower(secCHUA), "chromium") {
+			return true, "sec_ch_ua_brand_mismatch"
+		}
+	}
+
+	// 5. Modern Chromium Client Hints (Sec-CH-UA) & Fetch Metadata validation (Sec-Fetch-* headers)
 	if match := reChromeVer.FindStringSubmatch(uaTrim); len(match) > 1 {
 		ver, err := strconv.Atoi(match[1])
-		if err == nil && ver >= 90 {
-			fetchSite := headers.Get("Sec-Fetch-Site")
-			fetchMode := headers.Get("Sec-Fetch-Mode")
-			fetchDest := headers.Get("Sec-Fetch-Dest")
-			if fetchSite == "" && fetchMode == "" && fetchDest == "" {
-				return true, "missing_sec_fetch"
+		if err == nil {
+			if ver >= 89 && secPlatformRaw != "" && strings.TrimSpace(secCHUA) == "" {
+				return true, "missing_sec_ch_ua"
+			}
+			if ver >= 90 {
+				fetchSite := headers.Get("Sec-Fetch-Site")
+				fetchMode := headers.Get("Sec-Fetch-Mode")
+				fetchDest := headers.Get("Sec-Fetch-Dest")
+				if fetchSite == "" && fetchMode == "" && fetchDest == "" {
+					return true, "missing_sec_fetch"
+				}
+				if strings.EqualFold(fetchDest, "document") && fetchMode != "" && !strings.EqualFold(fetchMode, "navigate") {
+					return true, "sec_fetch_mode_mismatch"
+				}
 			}
 		}
 	}
@@ -118,7 +155,10 @@ func DetectScriptClient(ua string, headers http.Header) (bool, string) {
 	if headers.Get("X-Scrapy") != "" {
 		return true, "scrapy_crawler"
 	}
-	if headers.Get("Sec-WebDriver") != "" || headers.Get("X-Headless") != "" {
+	if headers.Get("X-Cypress") != "" {
+		return true, "cypress_headless"
+	}
+	if headers.Get("Sec-WebDriver") != "" || headers.Get("X-Headless") != "" || headers.Get("X-Headless-Chrome") != "" || headers.Get("X-Automation") != "" {
 		return true, "webdriver_automation"
 	}
 
