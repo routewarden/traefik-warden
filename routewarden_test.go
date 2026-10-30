@@ -3124,6 +3124,124 @@ func TestRouteWarden_BrowserImpersonationAndScriptClients(t *testing.T) {
 	}
 }
 
+func TestRouteWarden_BotDefenseLevelPresets(t *testing.T) {
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("OK"))
+	})
+
+	// 1. Level: standard -> blocks GPTBot, python-requests, and spoofed Chrome
+	cfgStandard := traefik_warden.CreateConfig()
+	cfgStandard.BotDefenseLevel = "standard"
+	hStandard, err := traefik_warden.New(context.Background(), next, cfgStandard, "test-standard")
+	if err != nil {
+		t.Fatalf("failed to create handler: %v", err)
+	}
+
+	// GPTBot blocked
+	reqGPT := httptest.NewRequest(http.MethodGet, "/index.html", nil)
+	reqGPT.Header.Set("User-Agent", "Mozilla/5.0 AppleWebKit/537.36 (compatible; GPTBot/1.2; +https://openai.com/gptbot)")
+	recGPT := httptest.NewRecorder()
+	hStandard.ServeHTTP(recGPT, reqGPT)
+	if recGPT.Code != http.StatusForbidden {
+		t.Errorf("expected GPTBot to be blocked under standard level, got %d", recGPT.Code)
+	}
+
+	// Python-requests blocked
+	reqPy := httptest.NewRequest(http.MethodGet, "/index.html", nil)
+	reqPy.Header.Set("User-Agent", "python-requests/2.31.0")
+	recPy := httptest.NewRecorder()
+	hStandard.ServeHTTP(recPy, reqPy)
+	if recPy.Code != http.StatusForbidden {
+		t.Errorf("expected python-requests to be blocked under standard level, got %d", recPy.Code)
+	}
+
+	// Spoofed Chrome (missing Accept-Language) blocked
+	chromeUA := "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+	reqSpoofed := httptest.NewRequest(http.MethodGet, "/index.html", nil)
+	reqSpoofed.Header.Set("User-Agent", chromeUA)
+	recSpoofed := httptest.NewRecorder()
+	hStandard.ServeHTTP(recSpoofed, reqSpoofed)
+	if recSpoofed.Code != http.StatusForbidden {
+		t.Errorf("expected spoofed Chrome to be blocked under standard level, got %d", recSpoofed.Code)
+	}
+
+	// Search bot (PerplexityBot) allowed under standard (train_only default)
+	reqPerp := httptest.NewRequest(http.MethodGet, "/index.html", nil)
+	reqPerp.Header.Set("User-Agent", "Mozilla/5.0 (compatible; PerplexityBot/1.0; +https://perplexity.ai/perplexitybot)")
+	recPerp := httptest.NewRecorder()
+	hStandard.ServeHTTP(recPerp, reqPerp)
+	if recPerp.Code != http.StatusOK {
+		t.Errorf("expected PerplexityBot to pass under standard level, got %d", recPerp.Code)
+	}
+
+	// 2. Level: strict -> blocks search bot (PerplexityBot)
+	cfgStrict := traefik_warden.CreateConfig()
+	cfgStrict.BotDefenseLevel = "strict"
+	hStrict, err := traefik_warden.New(context.Background(), next, cfgStrict, "test-strict")
+	if err != nil {
+		t.Fatalf("failed to create handler: %v", err)
+	}
+
+	recPerpStrict := httptest.NewRecorder()
+	hStrict.ServeHTTP(recPerpStrict, reqPerp)
+	if recPerpStrict.Code != http.StatusForbidden {
+		t.Errorf("expected PerplexityBot to be blocked under strict level, got %d", recPerpStrict.Code)
+	}
+
+	// 3. Level: light -> allows spoofed Chrome (detectBrowserImpersonation is false), blocks python-requests
+	cfgLight := traefik_warden.CreateConfig()
+	cfgLight.BotDefenseLevel = "light"
+	hLight, err := traefik_warden.New(context.Background(), next, cfgLight, "test-light")
+	if err != nil {
+		t.Fatalf("failed to create handler: %v", err)
+	}
+
+	recSpoofedLight := httptest.NewRecorder()
+	hLight.ServeHTTP(recSpoofedLight, reqSpoofed)
+	if recSpoofedLight.Code != http.StatusOK {
+		t.Errorf("expected spoofed Chrome to pass under light level (browser impersonation off), got %d", recSpoofedLight.Code)
+	}
+
+	recPyLight := httptest.NewRecorder()
+	hLight.ServeHTTP(recPyLight, reqPy)
+	if recPyLight.Code != http.StatusForbidden {
+		t.Errorf("expected python-requests to be blocked under light level, got %d", recPyLight.Code)
+	}
+
+	// 4. File config with botDefenseLevel: standard and explicit override detectBrowserImpersonation: false
+	tmpDir := t.TempDir()
+	confPath := filepath.Join(tmpDir, "routewarden.json")
+	overrideJSON := `{
+		"botDefenseLevel": "standard",
+		"detectBrowserImpersonation": false
+	}`
+	if err := os.WriteFile(confPath, []byte(overrideJSON), 0644); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	cfgFileOverride := traefik_warden.CreateConfig()
+	cfgFileOverride.ConfigFile = confPath
+	hFileOverride, err := traefik_warden.New(context.Background(), next, cfgFileOverride, "test-file-override")
+	if err != nil {
+		t.Fatalf("failed to create handler: %v", err)
+	}
+
+	// Spoofed Chrome should be allowed due to explicit override detectBrowserImpersonation: false
+	recSpoofedOverride := httptest.NewRecorder()
+	hFileOverride.ServeHTTP(recSpoofedOverride, reqSpoofed)
+	if recSpoofedOverride.Code != http.StatusOK {
+		t.Errorf("expected spoofed Chrome to pass with explicit override detectBrowserImpersonation: false, got %d", recSpoofedOverride.Code)
+	}
+
+	// But GPTBot should still be blocked because standard level enabled blockAIBots
+	recGPTOverride := httptest.NewRecorder()
+	hFileOverride.ServeHTTP(recGPTOverride, reqGPT)
+	if recGPTOverride.Code != http.StatusForbidden {
+		t.Errorf("expected GPTBot to be blocked under standard level preset in file, got %d", recGPTOverride.Code)
+	}
+}
+
 
 
 

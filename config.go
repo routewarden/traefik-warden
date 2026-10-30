@@ -99,6 +99,7 @@ type Config struct {
 	AllowedASNs                []string `json:"allowedASNs,omitempty"`
 	BlockedASNs                []string `json:"blockedASNs,omitempty"`
 	ASNDB                      string   `json:"asnDB,omitempty"`
+	BotDefenseLevel            string   `json:"botDefenseLevel,omitempty"`
 	BlockAIBots                bool     `json:"blockAIBots,omitempty"`
 	AIBotProfile               string   `json:"aiBotProfile,omitempty"`
 	BlockUserAgents            []string `json:"blockUserAgents,omitempty"`

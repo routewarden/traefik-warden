@@ -28,6 +28,7 @@ type RouteWarden struct {
 	bodyRegexes       []*regexp.Regexp
 	blockUAPatterns   []*regexp.Regexp
 	allowUAPatterns   []*regexp.Regexp
+	botDefenseLevel   string
 	blockAIBots       bool
 	aiBotProfile      string
 	honeypotTrapPaths      []string
@@ -99,6 +100,8 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 			BlockedASNsSnake                []string              `json:"blocked_asns"`
 			ASNDB                           string                `json:"asnDB"`
 			ASNDBSnake                      string                `json:"asn_db"`
+			BotDefenseLevel                 *string               `json:"botDefenseLevel"`
+			BotDefenseLevelSnake            *string               `json:"bot_defense_level"`
 			BlockAIBots                     *bool                 `json:"blockAIBots"`
 			BlockAIBotsSnake                *bool                 `json:"block_ai_bots"`
 			AIBotProfile                    *string               `json:"aiBotProfile"`
@@ -187,6 +190,15 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		if scf.ASNDBSnake != "" {
 			fileCfg.ASNDB = scf.ASNDBSnake
 		}
+		if scf.BotDefenseLevel != nil {
+			fileCfg.BotDefenseLevel = *scf.BotDefenseLevel
+		} else if scf.BotDefenseLevelSnake != nil {
+			fileCfg.BotDefenseLevel = *scf.BotDefenseLevelSnake
+		}
+		if fileCfg.BotDefenseLevel != "" {
+			applyBotDefenseLevel(fileCfg.BotDefenseLevel, &fileCfg.BlockAIBots, &fileCfg.AIBotProfile, &fileCfg.DetectBrowserImpersonation, &fileCfg.BlockScriptClients, &fileCfg.VerifySearchEngineBots)
+		}
+
 		if scf.BlockAIBots != nil {
 			fileCfg.BlockAIBots = *scf.BlockAIBots
 		} else if scf.BlockAIBotsSnake != nil {
@@ -380,6 +392,10 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		if config.ASNDB != "" {
 			fileCfg.ASNDB = config.ASNDB
 		}
+		if config.BotDefenseLevel != "" {
+			fileCfg.BotDefenseLevel = config.BotDefenseLevel
+			applyBotDefenseLevel(config.BotDefenseLevel, &fileCfg.BlockAIBots, &fileCfg.AIBotProfile, &fileCfg.DetectBrowserImpersonation, &fileCfg.BlockScriptClients, &fileCfg.VerifySearchEngineBots)
+		}
 		if config.BlockAIBots {
 			fileCfg.BlockAIBots = config.BlockAIBots
 		}
@@ -498,6 +514,8 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		// Keep configFile path so callers can inspect it, but continue with merged config.
 		fileCfg.ConfigFile = config.ConfigFile
 		config = fileCfg
+	} else if config.BotDefenseLevel != "" {
+		applyBotDefenseLevel(config.BotDefenseLevel, &config.BlockAIBots, &config.AIBotProfile, &config.DetectBrowserImpersonation, &config.BlockScriptClients, &config.VerifySearchEngineBots)
 	}
 
 	methodsMap := make(map[string]struct{})
@@ -665,6 +683,7 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		bodyRegexes:            compiledBodyRegexes,
 		blockUAPatterns:        compiledBlockUARegexes,
 		allowUAPatterns:        compiledAllowUARegexes,
+		botDefenseLevel:        config.BotDefenseLevel,
 		blockAIBots:            config.BlockAIBots,
 		aiBotProfile:           config.AIBotProfile,
 		honeypotTrapPaths:      config.HoneypotTrapPaths,
@@ -1123,4 +1142,42 @@ func (b *bodyReadCloser) Close() error {
 		return b.Closer.Close()
 	}
 	return nil
+}
+
+// applyBotDefenseLevel applies preset security configurations for the given level.
+// Explicitly configured settings take precedence over presets.
+func applyBotDefenseLevel(level string, blockAIBots *bool, aiBotProfile *string, detectBrowser *bool, blockScripts *bool, verifySearch *bool) {
+	switch strings.ToLower(strings.TrimSpace(level)) {
+	case "light", "relaxed":
+		*blockAIBots = true
+		if *aiBotProfile == "" {
+			*aiBotProfile = "train_only"
+		}
+		*blockScripts = true
+		*verifySearch = true
+	case "standard", "moderate":
+		*blockAIBots = true
+		if *aiBotProfile == "" {
+			*aiBotProfile = "train_only"
+		}
+		*blockScripts = true
+		*detectBrowser = true
+		*verifySearch = true
+	case "strict":
+		*blockAIBots = true
+		if *aiBotProfile == "" {
+			*aiBotProfile = "all"
+		}
+		*blockScripts = true
+		*detectBrowser = true
+		*verifySearch = true
+	case "aggressive", "paranoia":
+		*blockAIBots = true
+		if *aiBotProfile == "" {
+			*aiBotProfile = "aggressive"
+		}
+		*blockScripts = true
+		*detectBrowser = true
+		*verifySearch = true
+	}
 }
