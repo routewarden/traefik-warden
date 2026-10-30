@@ -2930,5 +2930,61 @@ func TestRouteWarden_CustomUserAgents(t *testing.T) {
 	}
 }
 
+func TestRouteWarden_HoneypotSpiderTrap(t *testing.T) {
+	cfg := traefik_warden.CreateConfig()
+	cfg.EnableDefaultPatterns = false
+	cfg.HoneypotTrapPaths = []string{"/hidden-trap", "/crawler-trap/"}
+	cfg.TrapBanDuration = "1h"
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("legitimate page"))
+	})
+
+	handler, err := traefik_warden.New(context.Background(), next, cfg, "trap-test")
+	if err != nil {
+		t.Fatalf("failed to create plugin: %v", err)
+	}
+
+	clientIP := "198.51.100.42:12345"
+
+	// 1. Initial legitimate request should pass
+	reqLegit := httptest.NewRequest(http.MethodGet, "/index.html", nil)
+	reqLegit.RemoteAddr = clientIP
+	recLegit := httptest.NewRecorder()
+	handler.ServeHTTP(recLegit, reqLegit)
+	if recLegit.Code != http.StatusOK {
+		t.Fatalf("expected 200 for initial request, got %d", recLegit.Code)
+	}
+
+	// 2. Crawler hits hidden honeypot trap
+	reqTrap := httptest.NewRequest(http.MethodGet, "/hidden-trap", nil)
+	reqTrap.RemoteAddr = clientIP
+	recTrap := httptest.NewRecorder()
+	handler.ServeHTTP(recTrap, reqTrap)
+	if recTrap.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 on trap hit, got %d", recTrap.Code)
+	}
+
+	// 3. Subsequent request to legitimate path must be blocked because IP is now banned
+	reqSubsequent := httptest.NewRequest(http.MethodGet, "/index.html", nil)
+	reqSubsequent.RemoteAddr = clientIP
+	recSubsequent := httptest.NewRecorder()
+	handler.ServeHTTP(recSubsequent, reqSubsequent)
+	if recSubsequent.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for subsequent request due to active ban, got %d", recSubsequent.Code)
+	}
+
+	// 4. Different IP should still be allowed
+	reqOther := httptest.NewRequest(http.MethodGet, "/index.html", nil)
+	reqOther.RemoteAddr = "203.0.113.99:12345"
+	recOther := httptest.NewRecorder()
+	handler.ServeHTTP(recOther, reqOther)
+	if recOther.Code != http.StatusOK {
+		t.Fatalf("expected 200 for different unbanned IP, got %d", recOther.Code)
+	}
+}
+
+
 
 

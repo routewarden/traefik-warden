@@ -29,6 +29,9 @@ type RouteWarden struct {
 	allowUAPatterns   []*regexp.Regexp
 	blockAIBots       bool
 	aiBotProfile      string
+	honeypotTrapPaths []string
+	banTable          *BanTable
+	trapBanDuration   time.Duration
 	ipFilter          *IPFilter
 	checkQuery        bool
 	checkHeaders      []string
@@ -99,6 +102,10 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 			BlockUserAgentsSnake            []string              `json:"block_user_agents"`
 			AllowUserAgents                 []string              `json:"allowUserAgents"`
 			AllowUserAgentsSnake            []string              `json:"allow_user_agents"`
+			HoneypotTrapPaths               []string              `json:"honeypotTrapPaths"`
+			HoneypotTrapPathsSnake          []string              `json:"honeypot_trap_paths"`
+			TrapBanDuration                 *string               `json:"trapBanDuration"`
+			TrapBanDurationSnake            *string               `json:"trap_ban_duration"`
 			AllowedIPs                      []string              `json:"allowedIps"`
 			AllowedIPsSnake                 []string              `json:"allowed_ips"`
 			TrustedProxies                  []string              `json:"trustedProxies"`
@@ -188,6 +195,16 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 			fileCfg.AllowUserAgents = scf.AllowUserAgents
 		} else if len(scf.AllowUserAgentsSnake) > 0 {
 			fileCfg.AllowUserAgents = scf.AllowUserAgentsSnake
+		}
+		if len(scf.HoneypotTrapPaths) > 0 {
+			fileCfg.HoneypotTrapPaths = scf.HoneypotTrapPaths
+		} else if len(scf.HoneypotTrapPathsSnake) > 0 {
+			fileCfg.HoneypotTrapPaths = scf.HoneypotTrapPathsSnake
+		}
+		if scf.TrapBanDuration != nil {
+			fileCfg.TrapBanDuration = *scf.TrapBanDuration
+		} else if scf.TrapBanDurationSnake != nil {
+			fileCfg.TrapBanDuration = *scf.TrapBanDurationSnake
 		}
 		if len(scf.AllowedIPs) > 0 {
 			fileCfg.AllowedIPs = scf.AllowedIPs
@@ -348,6 +365,12 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		}
 		if len(config.AllowUserAgents) > 0 {
 			fileCfg.AllowUserAgents = config.AllowUserAgents
+		}
+		if len(config.HoneypotTrapPaths) > 0 {
+			fileCfg.HoneypotTrapPaths = config.HoneypotTrapPaths
+		}
+		if config.TrapBanDuration != "" {
+			fileCfg.TrapBanDuration = config.TrapBanDuration
 		}
 		if len(config.AllowedIPs) > 0 {
 			fileCfg.AllowedIPs = config.AllowedIPs
@@ -584,6 +607,12 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		bodyMaxBytes = 64 * 1024
 	}
 
+	banDuration := ParseBanDuration(config.TrapBanDuration)
+	var banTable *BanTable
+	if len(config.HoneypotTrapPaths) > 0 {
+		banTable = NewBanTable(10000)
+	}
+
 	rw := &RouteWarden{
 		next:              next,
 		name:              name,
@@ -598,6 +627,9 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		allowUAPatterns:   compiledAllowUARegexes,
 		blockAIBots:       config.BlockAIBots,
 		aiBotProfile:      config.AIBotProfile,
+		honeypotTrapPaths: config.HoneypotTrapPaths,
+		banTable:          banTable,
+		trapBanDuration:   banDuration,
 		ipFilter:          ipFilter,
 		checkQuery:        config.CheckQuery,
 		checkHeaders:      cleanedHeaders,
@@ -713,6 +745,16 @@ func (rw *RouteWarden) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		}
 	}
 
+	clientIP := rw.extractClientIP(req)
+
+	// Active Ban Table Check
+	if rw.banTable != nil && rw.banTable.IsBanned(clientIP) {
+		rw.logDebug("client IP %s is actively banned, dropping request", clientIP)
+		rw.logSecurityEvent(req, clientIP, "ban_table", "ip_banned")
+		rw.responseHandler.ServeBlockedRequest(w, req)
+		return
+	}
+
 	// User-Agent & AI Bot Inspection
 	ua := req.UserAgent()
 	uaAllowed := false
@@ -746,7 +788,6 @@ func (rw *RouteWarden) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		}
 
 		if uaBlocked {
-			clientIP := rw.extractClientIP(req)
 			rw.logDebug("client %s User-Agent %q blocked by pattern %q (reason: %s)", clientIP, ua, uaPattern, uaReason)
 			rw.logSecurityEvent(req, ua, uaPattern, uaReason)
 			rw.responseHandler.ServeBlockedRequest(w, req)
@@ -757,6 +798,24 @@ func (rw *RouteWarden) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	// Canonicalize and inspect paths with anti-evasion protections
 	candidatePaths := ExtractCandidatePaths(req.URL.RawPath, req.URL.Path, req.RequestURI)
 	rw.logDebug("inspecting request %s %s with %d candidate paths: %v", req.Method, req.URL.Path, len(candidatePaths), candidatePaths)
+
+	// Honeypot spider trap check
+	if len(rw.honeypotTrapPaths) > 0 {
+		for _, candPath := range candidatePaths {
+			for _, trapPath := range rw.honeypotTrapPaths {
+				cleanTrap := strings.TrimSpace(trapPath)
+				if cleanTrap != "" && (candPath == cleanTrap || (strings.HasSuffix(cleanTrap, "/") && strings.HasPrefix(candPath, cleanTrap))) {
+					if rw.banTable != nil {
+						rw.banTable.Ban(clientIP, rw.trapBanDuration)
+					}
+					rw.logDebug("client %s triggered honeypot spider trap %q (path: %q), banned for %v", clientIP, cleanTrap, candPath, rw.trapBanDuration)
+					rw.logSecurityEvent(req, candPath, cleanTrap, "honeypot_trap_triggered")
+					rw.responseHandler.ServeBlockedRequest(w, req)
+					return
+				}
+			}
+		}
+	}
 
 	// 1. Check AllowPatterns first (Allowlist override)
 	for _, p := range candidatePaths {
