@@ -33,9 +33,11 @@ type RouteWarden struct {
 	honeypotTrapPaths      []string
 	banTable               *BanTable
 	trapBanDuration        time.Duration
-	verifySearchEngineBots bool
-	fcrdnsVerifier         *FCrDNSVerifier
-	ipFilter               *IPFilter
+	verifySearchEngineBots     bool
+	fcrdnsVerifier             *FCrDNSVerifier
+	detectBrowserImpersonation bool
+	blockScriptClients         bool
+	ipFilter                   *IPFilter
 	checkQuery        bool
 	checkHeaders      []string
 	checkBody         bool
@@ -111,6 +113,10 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 			TrapBanDurationSnake            *string               `json:"trap_ban_duration"`
 			VerifySearchEngineBots          *bool                 `json:"verifySearchEngineBots"`
 			VerifySearchEngineBotsSnake     *bool                 `json:"verify_search_engine_bots"`
+			DetectBrowserImpersonation      *bool                 `json:"detectBrowserImpersonation"`
+			DetectBrowserImpersonationSnake *bool                 `json:"detect_browser_impersonation"`
+			BlockScriptClients              *bool                 `json:"blockScriptClients"`
+			BlockScriptClientsSnake         *bool                 `json:"block_script_clients"`
 			AllowedIPs                      []string              `json:"allowedIps"`
 			AllowedIPsSnake                 []string              `json:"allowed_ips"`
 			TrustedProxies                  []string              `json:"trustedProxies"`
@@ -215,6 +221,16 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 			fileCfg.VerifySearchEngineBots = *scf.VerifySearchEngineBots
 		} else if scf.VerifySearchEngineBotsSnake != nil {
 			fileCfg.VerifySearchEngineBots = *scf.VerifySearchEngineBotsSnake
+		}
+		if scf.DetectBrowserImpersonation != nil {
+			fileCfg.DetectBrowserImpersonation = *scf.DetectBrowserImpersonation
+		} else if scf.DetectBrowserImpersonationSnake != nil {
+			fileCfg.DetectBrowserImpersonation = *scf.DetectBrowserImpersonationSnake
+		}
+		if scf.BlockScriptClients != nil {
+			fileCfg.BlockScriptClients = *scf.BlockScriptClients
+		} else if scf.BlockScriptClientsSnake != nil {
+			fileCfg.BlockScriptClients = *scf.BlockScriptClientsSnake
 		}
 		if len(scf.AllowedIPs) > 0 {
 			fileCfg.AllowedIPs = scf.AllowedIPs
@@ -384,6 +400,12 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		}
 		if config.VerifySearchEngineBots {
 			fileCfg.VerifySearchEngineBots = config.VerifySearchEngineBots
+		}
+		if config.DetectBrowserImpersonation {
+			fileCfg.DetectBrowserImpersonation = config.DetectBrowserImpersonation
+		}
+		if config.BlockScriptClients {
+			fileCfg.BlockScriptClients = config.BlockScriptClients
 		}
 		if len(config.AllowedIPs) > 0 {
 			fileCfg.AllowedIPs = config.AllowedIPs
@@ -648,9 +670,11 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		honeypotTrapPaths:      config.HoneypotTrapPaths,
 		banTable:               banTable,
 		trapBanDuration:        banDuration,
-		verifySearchEngineBots: config.VerifySearchEngineBots,
-		fcrdnsVerifier:         fcrdns,
-		ipFilter:               ipFilter,
+		verifySearchEngineBots:     config.VerifySearchEngineBots,
+		fcrdnsVerifier:             fcrdns,
+		detectBrowserImpersonation: config.DetectBrowserImpersonation,
+		blockScriptClients:         config.BlockScriptClients,
+		ipFilter:                   ipFilter,
 		checkQuery:        config.CheckQuery,
 		checkHeaders:      cleanedHeaders,
 		checkBody:         config.CheckBody || len(compiledBodyRegexes) > 0,
@@ -831,6 +855,22 @@ func (rw *RouteWarden) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				uaBlocked = true
 				uaPattern = botType
 				uaReason = "ai_bot_blocked"
+			}
+		}
+
+		if !uaBlocked && rw.detectBrowserImpersonation {
+			if isSpoofed, reason := DetectBrowserImpersonation(ua, req.Header); isSpoofed {
+				uaBlocked = true
+				uaPattern = reason
+				uaReason = "browser_spoofed"
+			}
+		}
+
+		if !uaBlocked && rw.blockScriptClients {
+			if isScript, clientType := DetectScriptClient(ua, req.Header); isScript {
+				uaBlocked = true
+				uaPattern = clientType
+				uaReason = "script_client_blocked"
 			}
 		}
 

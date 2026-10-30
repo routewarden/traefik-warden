@@ -3054,6 +3054,75 @@ func TestRouteWarden_SearchEngineImpersonation(t *testing.T) {
 	}
 }
 
+func TestRouteWarden_BrowserImpersonationAndScriptClients(t *testing.T) {
+	cfg := traefik_warden.CreateConfig()
+	cfg.DetectBrowserImpersonation = true
+	cfg.BlockScriptClients = true
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("OK"))
+	})
+
+	handler, err := traefik_warden.New(context.Background(), next, cfg, "test-bot-fingerprint")
+	if err != nil {
+		t.Fatalf("failed to create handler: %v", err)
+	}
+
+	chromeUA := "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+
+	// 1. Spoofed Chrome (missing Accept-Language) -> blocked 403
+	reqSpoofed := httptest.NewRequest(http.MethodGet, "/index.html", nil)
+	reqSpoofed.Header.Set("User-Agent", chromeUA)
+	reqSpoofed.Header.Set("Accept-Encoding", "gzip, deflate, br")
+	recSpoofed := httptest.NewRecorder()
+	handler.ServeHTTP(recSpoofed, reqSpoofed)
+	if recSpoofed.Code != http.StatusForbidden {
+		t.Errorf("expected spoofed Chrome to be blocked with 403, got %d", recSpoofed.Code)
+	}
+
+	// 2. Legitimate Chrome with companion headers -> 200 OK
+	reqLegit := httptest.NewRequest(http.MethodGet, "/index.html", nil)
+	reqLegit.Header.Set("User-Agent", chromeUA)
+	reqLegit.Header.Set("Accept-Language", "en-US,en;q=0.9")
+	reqLegit.Header.Set("Accept-Encoding", "gzip, deflate, br")
+	reqLegit.Header.Set("Sec-CH-UA-Platform", `"Windows"`)
+	reqLegit.Header.Set("Sec-Fetch-Site", "none")
+	reqLegit.Header.Set("Sec-Fetch-Mode", "navigate")
+	reqLegit.Header.Set("Sec-Fetch-Dest", "document")
+	recLegit := httptest.NewRecorder()
+	handler.ServeHTTP(recLegit, reqLegit)
+	if recLegit.Code != http.StatusOK {
+		t.Errorf("expected legitimate Chrome to be allowed with 200, got %d", recLegit.Code)
+	}
+
+	// 3. Script client (python-requests) -> blocked 403
+	reqScript := httptest.NewRequest(http.MethodGet, "/index.html", nil)
+	reqScript.Header.Set("User-Agent", "python-requests/2.31.0")
+	recScript := httptest.NewRecorder()
+	handler.ServeHTTP(recScript, reqScript)
+	if recScript.Code != http.StatusForbidden {
+		t.Errorf("expected python-requests to be blocked with 403, got %d", recScript.Code)
+	}
+
+	// 4. Script client with headless playwright header -> blocked 403
+	reqHeadless := httptest.NewRequest(http.MethodGet, "/index.html", nil)
+	reqHeadless.Header.Set("User-Agent", chromeUA)
+	reqHeadless.Header.Set("Accept-Language", "en-US,en;q=0.9")
+	reqHeadless.Header.Set("Accept-Encoding", "gzip, deflate, br")
+	reqHeadless.Header.Set("Sec-CH-UA-Platform", `"Windows"`)
+	reqHeadless.Header.Set("Sec-Fetch-Site", "none")
+	reqHeadless.Header.Set("Sec-Fetch-Mode", "navigate")
+	reqHeadless.Header.Set("Sec-Fetch-Dest", "document")
+	reqHeadless.Header.Set("X-Playwright", "true")
+	recHeadless := httptest.NewRecorder()
+	handler.ServeHTTP(recHeadless, reqHeadless)
+	if recHeadless.Code != http.StatusForbidden {
+		t.Errorf("expected playwright client to be blocked with 403, got %d", recHeadless.Code)
+	}
+}
+
+
 
 
 
