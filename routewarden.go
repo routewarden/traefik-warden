@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -29,10 +30,12 @@ type RouteWarden struct {
 	allowUAPatterns   []*regexp.Regexp
 	blockAIBots       bool
 	aiBotProfile      string
-	honeypotTrapPaths []string
-	banTable          *BanTable
-	trapBanDuration   time.Duration
-	ipFilter          *IPFilter
+	honeypotTrapPaths      []string
+	banTable               *BanTable
+	trapBanDuration        time.Duration
+	verifySearchEngineBots bool
+	fcrdnsVerifier         *FCrDNSVerifier
+	ipFilter               *IPFilter
 	checkQuery        bool
 	checkHeaders      []string
 	checkBody         bool
@@ -106,6 +109,8 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 			HoneypotTrapPathsSnake          []string              `json:"honeypot_trap_paths"`
 			TrapBanDuration                 *string               `json:"trapBanDuration"`
 			TrapBanDurationSnake            *string               `json:"trap_ban_duration"`
+			VerifySearchEngineBots          *bool                 `json:"verifySearchEngineBots"`
+			VerifySearchEngineBotsSnake     *bool                 `json:"verify_search_engine_bots"`
 			AllowedIPs                      []string              `json:"allowedIps"`
 			AllowedIPsSnake                 []string              `json:"allowed_ips"`
 			TrustedProxies                  []string              `json:"trustedProxies"`
@@ -205,6 +210,11 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 			fileCfg.TrapBanDuration = *scf.TrapBanDuration
 		} else if scf.TrapBanDurationSnake != nil {
 			fileCfg.TrapBanDuration = *scf.TrapBanDurationSnake
+		}
+		if scf.VerifySearchEngineBots != nil {
+			fileCfg.VerifySearchEngineBots = *scf.VerifySearchEngineBots
+		} else if scf.VerifySearchEngineBotsSnake != nil {
+			fileCfg.VerifySearchEngineBots = *scf.VerifySearchEngineBotsSnake
 		}
 		if len(scf.AllowedIPs) > 0 {
 			fileCfg.AllowedIPs = scf.AllowedIPs
@@ -371,6 +381,9 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		}
 		if config.TrapBanDuration != "" {
 			fileCfg.TrapBanDuration = config.TrapBanDuration
+		}
+		if config.VerifySearchEngineBots {
+			fileCfg.VerifySearchEngineBots = config.VerifySearchEngineBots
 		}
 		if len(config.AllowedIPs) > 0 {
 			fileCfg.AllowedIPs = config.AllowedIPs
@@ -613,24 +626,31 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		banTable = NewBanTable(10000)
 	}
 
+	var fcrdns *FCrDNSVerifier
+	if config.VerifySearchEngineBots {
+		fcrdns = NewFCrDNSVerifier(6*time.Hour, 500*time.Millisecond)
+	}
+
 	rw := &RouteWarden{
-		next:              next,
-		name:              name,
-		enabled:           config.Enabled,
-		debug:             config.Debug,
-		securityLog:       config.SecurityLog,
-		methods:           methodsMap,
-		blockRegexes:      compiledBlockRegexes,
-		allowRegexes:      compiledAllowRegexes,
-		bodyRegexes:       compiledBodyRegexes,
-		blockUAPatterns:   compiledBlockUARegexes,
-		allowUAPatterns:   compiledAllowUARegexes,
-		blockAIBots:       config.BlockAIBots,
-		aiBotProfile:      config.AIBotProfile,
-		honeypotTrapPaths: config.HoneypotTrapPaths,
-		banTable:          banTable,
-		trapBanDuration:   banDuration,
-		ipFilter:          ipFilter,
+		next:                   next,
+		name:                   name,
+		enabled:                config.Enabled,
+		debug:                  config.Debug,
+		securityLog:            config.SecurityLog,
+		methods:                methodsMap,
+		blockRegexes:           compiledBlockRegexes,
+		allowRegexes:           compiledAllowRegexes,
+		bodyRegexes:            compiledBodyRegexes,
+		blockUAPatterns:        compiledBlockUARegexes,
+		allowUAPatterns:        compiledAllowUARegexes,
+		blockAIBots:            config.BlockAIBots,
+		aiBotProfile:           config.AIBotProfile,
+		honeypotTrapPaths:      config.HoneypotTrapPaths,
+		banTable:               banTable,
+		trapBanDuration:        banDuration,
+		verifySearchEngineBots: config.VerifySearchEngineBots,
+		fcrdnsVerifier:         fcrdns,
+		ipFilter:               ipFilter,
 		checkQuery:        config.CheckQuery,
 		checkHeaders:      cleanedHeaders,
 		checkBody:         config.CheckBody || len(compiledBodyRegexes) > 0,
@@ -642,6 +662,17 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		rw.enabled, rw.debug, rw.securityLog, len(rw.blockRegexes), len(rw.allowRegexes), len(config.AllowedIPs), rw.responseHandler.config.Mode)
 
 	return rw, nil
+}
+
+// SetFCrDNSLookupFuncs overrides the DNS lookup functions for testing purposes.
+func (rw *RouteWarden) SetFCrDNSLookupFuncs(
+	lookupAddr func(ctx context.Context, addr string) ([]string, error),
+	lookupIP func(ctx context.Context, host string) ([]net.IP, error),
+) {
+	if rw.fcrdnsVerifier != nil {
+		rw.fcrdnsVerifier.lookupAddr = lookupAddr
+		rw.fcrdnsVerifier.lookupIP = lookupIP
+	}
 }
 
 func (rw *RouteWarden) logDebug(format string, v ...interface{}) {
@@ -762,6 +793,22 @@ func (rw *RouteWarden) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if re.MatchString(ua) {
 			uaAllowed = true
 			break
+		}
+	}
+
+	if !uaAllowed {
+		// Search engine bot impersonation verification (FCrDNS)
+		if rw.verifySearchEngineBots && rw.fcrdnsVerifier != nil {
+			if claimsBot, engine := DetectSearchEngineBot(ua); claimsBot {
+				if !rw.fcrdnsVerifier.Verify(req.Context(), clientIP, engine) {
+					rw.logDebug("client %s spoofed search engine %s (User-Agent: %q), failed FCrDNS", clientIP, engine, ua)
+					rw.logSecurityEvent(req, ua, string(engine)+"_spoofed", "search_engine_spoofed")
+					rw.responseHandler.ServeBlockedRequest(w, req)
+					return
+				}
+				// Verified legitimate search engine spider; exempt from generic bot blocks
+				uaAllowed = true
+			}
 		}
 	}
 

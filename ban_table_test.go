@@ -82,3 +82,4 @@ func TestParseBanDuration(t *testing.T) {
 		}
 	}
 }
+

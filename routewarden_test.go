@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -2984,6 +2985,75 @@ func TestRouteWarden_HoneypotSpiderTrap(t *testing.T) {
 		t.Fatalf("expected 200 for different unbanned IP, got %d", recOther.Code)
 	}
 }
+
+func TestRouteWarden_SearchEngineImpersonation(t *testing.T) {
+	cfg := traefik_warden.CreateConfig()
+	cfg.EnableDefaultPatterns = false
+	cfg.VerifySearchEngineBots = true
+	cfg.BlockAIBots = true // Ensure verified search engine is exempt while fake is blocked
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("legitimate content"))
+	})
+
+	h, err := traefik_warden.New(context.Background(), next, cfg, "fcrdns-test")
+	if err != nil {
+		t.Fatalf("failed to create plugin: %v", err)
+	}
+
+	rw, ok := h.(*traefik_warden.RouteWarden)
+	if !ok {
+		t.Fatalf("handler is not *RouteWarden")
+	}
+
+	// Mock DNS verifier lookups
+	rw.SetFCrDNSLookupFuncs(
+		func(ctx context.Context, addr string) ([]string, error) {
+			if addr == "66.249.66.1" {
+				return []string{"crawl-66-249-66-1.googlebot.com."}, nil
+			}
+			return []string{"attacker.vps.com."}, nil
+		},
+		func(ctx context.Context, host string) ([]net.IP, error) {
+			if host == "crawl-66-249-66-1.googlebot.com" {
+				return []net.IP{net.ParseIP("66.249.66.1")}, nil
+			}
+			return []net.IP{net.ParseIP("198.51.100.99")}, nil
+		},
+	)
+
+	// 1. Legitimate Googlebot passes
+	reqLegit := httptest.NewRequest(http.MethodGet, "/blog/article", nil)
+	reqLegit.RemoteAddr = "66.249.66.1:1234"
+	reqLegit.Header.Set("User-Agent", "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)")
+	recLegit := httptest.NewRecorder()
+	rw.ServeHTTP(recLegit, reqLegit)
+	if recLegit.Code != http.StatusOK {
+		t.Errorf("expected genuine Googlebot to pass with 200, got %d", recLegit.Code)
+	}
+
+	// 2. Spoofed Googlebot from attacker IP is blocked
+	reqSpoofed := httptest.NewRequest(http.MethodGet, "/blog/article", nil)
+	reqSpoofed.RemoteAddr = "198.51.100.99:5432"
+	reqSpoofed.Header.Set("User-Agent", "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)")
+	recSpoofed := httptest.NewRecorder()
+	rw.ServeHTTP(recSpoofed, reqSpoofed)
+	if recSpoofed.Code != http.StatusForbidden {
+		t.Errorf("expected spoofed Googlebot to be blocked with 403, got %d", recSpoofed.Code)
+	}
+
+	// 3. Normal user passes
+	reqUser := httptest.NewRequest(http.MethodGet, "/blog/article", nil)
+	reqUser.RemoteAddr = "198.51.100.99:5432"
+	reqUser.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36")
+	recUser := httptest.NewRecorder()
+	rw.ServeHTTP(recUser, reqUser)
+	if recUser.Code != http.StatusOK {
+		t.Errorf("expected normal user to pass with 200, got %d", recUser.Code)
+	}
+}
+
 
 
 
