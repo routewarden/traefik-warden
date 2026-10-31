@@ -3257,6 +3257,36 @@ func TestRouteWarden_BotDefenseLevelPresets(t *testing.T) {
 	if recAnthropic.Code != http.StatusForbidden {
 		t.Errorf("expected Anthropic/1.0 to be blocked under standard level, got %d", recAnthropic.Code)
 	}
+
+	// 6. Direct inline config with explicit MarkExplicit override
+	cfgInline := traefik_warden.CreateConfig()
+	cfgInline.BotDefenseLevel = "standard"
+	cfgInline.DetectBrowserImpersonation = false
+	cfgInline.MarkExplicit("detectBrowserImpersonation")
+	hInline, err := traefik_warden.New(context.Background(), next, cfgInline, "test-inline-explicit")
+	if err != nil {
+		t.Fatalf("failed to create handler: %v", err)
+	}
+	recInlineSpoofed := httptest.NewRecorder()
+	hInline.ServeHTTP(recInlineSpoofed, reqSpoofed)
+	if recInlineSpoofed.Code != http.StatusOK {
+		t.Errorf("expected spoofed Chrome to pass with inline explicit override detectBrowserImpersonation: false, got %d", recInlineSpoofed.Code)
+	}
+
+	// 7. Direct JSON unmarshaling into Config with explicit override
+	cfgJSON := traefik_warden.CreateConfig()
+	if err := json.Unmarshal([]byte(`{"botDefenseLevel":"standard","detectBrowserImpersonation":false}`), cfgJSON); err != nil {
+		t.Fatalf("failed to unmarshal JSON: %v", err)
+	}
+	hJSON, err := traefik_warden.New(context.Background(), next, cfgJSON, "test-json-explicit")
+	if err != nil {
+		t.Fatalf("failed to create handler: %v", err)
+	}
+	recJSONSpoofed := httptest.NewRecorder()
+	hJSON.ServeHTTP(recJSONSpoofed, reqSpoofed)
+	if recJSONSpoofed.Code != http.StatusOK {
+		t.Errorf("expected spoofed Chrome to pass with JSON explicit override detectBrowserImpersonation: false, got %d", recJSONSpoofed.Code)
+	}
 }
 
 

@@ -143,6 +143,8 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 			Debug                           *bool                 `json:"debug"`
 			SecurityLog                     *bool                 `json:"securityLog"`
 			SecurityLogSnake                *bool                 `json:"security_log"`
+			ExplicitFields                  []string              `json:"explicitFields"`
+			ExplicitFieldsSnake             []string              `json:"explicit_fields"`
 			Response                        *sharedResponseConfig `json:"response"`
 		}
 
@@ -190,24 +192,34 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		if scf.ASNDBSnake != "" {
 			fileCfg.ASNDB = scf.ASNDBSnake
 		}
+		if len(scf.ExplicitFields) > 0 {
+			fileCfg.ExplicitFields = append(fileCfg.ExplicitFields, scf.ExplicitFields...)
+		}
+		if len(scf.ExplicitFieldsSnake) > 0 {
+			fileCfg.ExplicitFields = append(fileCfg.ExplicitFields, scf.ExplicitFieldsSnake...)
+		}
 		if scf.BotDefenseLevel != nil {
 			fileCfg.BotDefenseLevel = *scf.BotDefenseLevel
 		} else if scf.BotDefenseLevelSnake != nil {
 			fileCfg.BotDefenseLevel = *scf.BotDefenseLevelSnake
 		}
 		if fileCfg.BotDefenseLevel != "" {
-			applyBotDefenseLevel(fileCfg.BotDefenseLevel, &fileCfg.BlockAIBots, &fileCfg.AIBotProfile, &fileCfg.DetectBrowserImpersonation, &fileCfg.BlockScriptClients, &fileCfg.VerifySearchEngineBots)
+			fileCfg.applyBotDefense(fileCfg.BotDefenseLevel)
 		}
 
 		if scf.BlockAIBots != nil {
 			fileCfg.BlockAIBots = *scf.BlockAIBots
+			fileCfg.MarkExplicit("blockAIBots")
 		} else if scf.BlockAIBotsSnake != nil {
 			fileCfg.BlockAIBots = *scf.BlockAIBotsSnake
+			fileCfg.MarkExplicit("blockAIBots")
 		}
 		if scf.AIBotProfile != nil {
 			fileCfg.AIBotProfile = *scf.AIBotProfile
+			fileCfg.MarkExplicit("aiBotProfile")
 		} else if scf.AIBotProfileSnake != nil {
 			fileCfg.AIBotProfile = *scf.AIBotProfileSnake
+			fileCfg.MarkExplicit("aiBotProfile")
 		}
 		if len(scf.BlockUserAgents) > 0 {
 			fileCfg.BlockUserAgents = scf.BlockUserAgents
@@ -231,18 +243,24 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		}
 		if scf.VerifySearchEngineBots != nil {
 			fileCfg.VerifySearchEngineBots = *scf.VerifySearchEngineBots
+			fileCfg.MarkExplicit("verifySearchEngineBots")
 		} else if scf.VerifySearchEngineBotsSnake != nil {
 			fileCfg.VerifySearchEngineBots = *scf.VerifySearchEngineBotsSnake
+			fileCfg.MarkExplicit("verifySearchEngineBots")
 		}
 		if scf.DetectBrowserImpersonation != nil {
 			fileCfg.DetectBrowserImpersonation = *scf.DetectBrowserImpersonation
+			fileCfg.MarkExplicit("detectBrowserImpersonation")
 		} else if scf.DetectBrowserImpersonationSnake != nil {
 			fileCfg.DetectBrowserImpersonation = *scf.DetectBrowserImpersonationSnake
+			fileCfg.MarkExplicit("detectBrowserImpersonation")
 		}
 		if scf.BlockScriptClients != nil {
 			fileCfg.BlockScriptClients = *scf.BlockScriptClients
+			fileCfg.MarkExplicit("blockScriptClients")
 		} else if scf.BlockScriptClientsSnake != nil {
 			fileCfg.BlockScriptClients = *scf.BlockScriptClientsSnake
+			fileCfg.MarkExplicit("blockScriptClients")
 		}
 		if len(scf.AllowedIPs) > 0 {
 			fileCfg.AllowedIPs = scf.AllowedIPs
@@ -394,12 +412,12 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		}
 		if config.BotDefenseLevel != "" {
 			fileCfg.BotDefenseLevel = config.BotDefenseLevel
-			applyBotDefenseLevel(config.BotDefenseLevel, &fileCfg.BlockAIBots, &fileCfg.AIBotProfile, &fileCfg.DetectBrowserImpersonation, &fileCfg.BlockScriptClients, &fileCfg.VerifySearchEngineBots)
+			fileCfg.applyBotDefense(config.BotDefenseLevel)
 		}
-		if config.BlockAIBots {
+		if config.IsExplicit("blockAIBots", "block_ai_bots") || config.BlockAIBots {
 			fileCfg.BlockAIBots = config.BlockAIBots
 		}
-		if config.AIBotProfile != "" {
+		if config.IsExplicit("aiBotProfile", "ai_bot_profile") || config.AIBotProfile != "" {
 			fileCfg.AIBotProfile = config.AIBotProfile
 		}
 		if len(config.BlockUserAgents) > 0 {
@@ -414,13 +432,13 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		if config.TrapBanDuration != "" {
 			fileCfg.TrapBanDuration = config.TrapBanDuration
 		}
-		if config.VerifySearchEngineBots {
+		if config.IsExplicit("verifySearchEngineBots", "verify_search_engine_bots") || config.VerifySearchEngineBots {
 			fileCfg.VerifySearchEngineBots = config.VerifySearchEngineBots
 		}
-		if config.DetectBrowserImpersonation {
+		if config.IsExplicit("detectBrowserImpersonation", "detect_browser_impersonation") || config.DetectBrowserImpersonation {
 			fileCfg.DetectBrowserImpersonation = config.DetectBrowserImpersonation
 		}
-		if config.BlockScriptClients {
+		if config.IsExplicit("blockScriptClients", "block_script_clients") || config.BlockScriptClients {
 			fileCfg.BlockScriptClients = config.BlockScriptClients
 		}
 		if len(config.AllowedIPs) > 0 {
@@ -515,7 +533,11 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		fileCfg.ConfigFile = config.ConfigFile
 		config = fileCfg
 	} else if config.BotDefenseLevel != "" {
-		applyBotDefenseLevel(config.BotDefenseLevel, &config.BlockAIBots, &config.AIBotProfile, &config.DetectBrowserImpersonation, &config.BlockScriptClients, &config.VerifySearchEngineBots)
+		config.applyBotDefense(config.BotDefenseLevel)
+	}
+
+	if config.BlockAIBots && config.AIBotProfile == "" {
+		config.AIBotProfile = "train_only"
 	}
 
 	methodsMap := make(map[string]struct{})
@@ -1142,6 +1164,72 @@ func (b *bodyReadCloser) Close() error {
 		return b.Closer.Close()
 	}
 	return nil
+}
+
+func (cfg *Config) applyBotDefense(level string) {
+	switch strings.ToLower(strings.TrimSpace(level)) {
+	case "light", "relaxed":
+		if !cfg.IsExplicit("blockAIBots", "block_ai_bots") {
+			cfg.BlockAIBots = true
+		}
+		if !cfg.IsExplicit("aiBotProfile", "ai_bot_profile") && cfg.AIBotProfile == "" {
+			cfg.AIBotProfile = "train_only"
+		}
+		if !cfg.IsExplicit("blockScriptClients", "block_script_clients") {
+			cfg.BlockScriptClients = true
+		}
+		if !cfg.IsExplicit("verifySearchEngineBots", "verify_search_engine_bots") {
+			cfg.VerifySearchEngineBots = true
+		}
+	case "standard", "moderate":
+		if !cfg.IsExplicit("blockAIBots", "block_ai_bots") {
+			cfg.BlockAIBots = true
+		}
+		if !cfg.IsExplicit("aiBotProfile", "ai_bot_profile") && cfg.AIBotProfile == "" {
+			cfg.AIBotProfile = "train_only"
+		}
+		if !cfg.IsExplicit("blockScriptClients", "block_script_clients") {
+			cfg.BlockScriptClients = true
+		}
+		if !cfg.IsExplicit("detectBrowserImpersonation", "detect_browser_impersonation") {
+			cfg.DetectBrowserImpersonation = true
+		}
+		if !cfg.IsExplicit("verifySearchEngineBots", "verify_search_engine_bots") {
+			cfg.VerifySearchEngineBots = true
+		}
+	case "strict":
+		if !cfg.IsExplicit("blockAIBots", "block_ai_bots") {
+			cfg.BlockAIBots = true
+		}
+		if !cfg.IsExplicit("aiBotProfile", "ai_bot_profile") && cfg.AIBotProfile == "" {
+			cfg.AIBotProfile = "all"
+		}
+		if !cfg.IsExplicit("blockScriptClients", "block_script_clients") {
+			cfg.BlockScriptClients = true
+		}
+		if !cfg.IsExplicit("detectBrowserImpersonation", "detect_browser_impersonation") {
+			cfg.DetectBrowserImpersonation = true
+		}
+		if !cfg.IsExplicit("verifySearchEngineBots", "verify_search_engine_bots") {
+			cfg.VerifySearchEngineBots = true
+		}
+	case "aggressive", "paranoia":
+		if !cfg.IsExplicit("blockAIBots", "block_ai_bots") {
+			cfg.BlockAIBots = true
+		}
+		if !cfg.IsExplicit("aiBotProfile", "ai_bot_profile") && cfg.AIBotProfile == "" {
+			cfg.AIBotProfile = "aggressive"
+		}
+		if !cfg.IsExplicit("blockScriptClients", "block_script_clients") {
+			cfg.BlockScriptClients = true
+		}
+		if !cfg.IsExplicit("detectBrowserImpersonation", "detect_browser_impersonation") {
+			cfg.DetectBrowserImpersonation = true
+		}
+		if !cfg.IsExplicit("verifySearchEngineBots", "verify_search_engine_bots") {
+			cfg.VerifySearchEngineBots = true
+		}
+	}
 }
 
 // applyBotDefenseLevel applies preset security configurations for the given level.

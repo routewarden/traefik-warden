@@ -3,6 +3,7 @@ package traefik_warden
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 )
 
 // DefaultBlockPatterns contains well-known sensitive endpoints and file extensions.
@@ -127,6 +128,56 @@ type Config struct {
 	Debug              bool            `json:"debug,omitempty"`             // Enable verbose debug logging to stdout/stderr
 	SecurityLog        bool            `json:"securityLog,omitempty"`       // Emit structured JSON security audit events (CrowdSec/SIEM compatible) on block
 	Response           *ResponseConfig `json:"response,omitempty"`
+	ExplicitFields     []string        `json:"explicitFields,omitempty"`
+}
+
+// MarkExplicit records one or more fields as explicitly configured by the user.
+func (c *Config) MarkExplicit(fields ...string) {
+	for _, field := range fields {
+		found := false
+		for _, ef := range c.ExplicitFields {
+			if strings.EqualFold(ef, field) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			c.ExplicitFields = append(c.ExplicitFields, field)
+		}
+	}
+}
+
+// IsExplicit returns true if any of the passed field names were explicitly configured.
+func (c *Config) IsExplicit(fields ...string) bool {
+	for _, field := range fields {
+		for _, ef := range c.ExplicitFields {
+			if strings.EqualFold(ef, field) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// UnmarshalJSON implements custom JSON unmarshaling to track all explicitly passed configuration keys.
+func (c *Config) UnmarshalJSON(data []byte) error {
+	type rawConfig Config
+	raw := rawConfig(*c)
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	*c = Config(raw)
+	if c.Response == nil {
+		c.Response = &ResponseConfig{Mode: "text"}
+	}
+
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(data, &obj); err == nil {
+		for k := range obj {
+			c.MarkExplicit(k)
+		}
+	}
+	return nil
 }
 
 // CreateConfig creates the default plugin configuration.
