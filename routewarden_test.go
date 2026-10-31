@@ -3240,6 +3240,23 @@ func TestRouteWarden_BotDefenseLevelPresets(t *testing.T) {
 	if recGPTOverride.Code != http.StatusForbidden {
 		t.Errorf("expected GPTBot to be blocked under standard level preset in file, got %d", recGPTOverride.Code)
 	}
+
+	// 5. Amazonbot and Anthropic/1.0 AI bot defense tests
+	reqAmazon := httptest.NewRequest("GET", "/index.html", nil)
+	reqAmazon.Header.Set("User-Agent", "Mozilla/5.0 (compatible; Amazonbot/0.1; +https://developer.amazon.com/support/amazonbot)")
+	recAmazon := httptest.NewRecorder()
+	hStandard.ServeHTTP(recAmazon, reqAmazon)
+	if recAmazon.Code != http.StatusForbidden {
+		t.Errorf("expected Amazonbot to be blocked under standard level, got %d", recAmazon.Code)
+	}
+
+	reqAnthropic := httptest.NewRequest("GET", "/index.html", nil)
+	reqAnthropic.Header.Set("User-Agent", "Anthropic/1.0")
+	recAnthropic := httptest.NewRecorder()
+	hStandard.ServeHTTP(recAnthropic, reqAnthropic)
+	if recAnthropic.Code != http.StatusForbidden {
+		t.Errorf("expected Anthropic/1.0 to be blocked under standard level, got %d", recAnthropic.Code)
+	}
 }
 
 

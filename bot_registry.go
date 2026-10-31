@@ -17,7 +17,7 @@ const (
 
 var (
 	// Training/Harvester crawlers (Tier 1): Mass scrape content for LLM pre-training.
-	reAITrainingBots = regexp.MustCompile(`(?i)(GPTBot|ClaudeBot|anthropic-ai|Claude-Web|Google-Extended|Bytespider|CCBot|Applebot-Extended|cohere-ai|Diffbot|ImagesiftBot|FacebookBot|Meta-ExternalAgent|Meta-ExternalFetcher|Omgilibot|Timpibot|Webzio|YouBot)`)
+	reAITrainingBots = regexp.MustCompile(`(?i)(GPTBot|ClaudeBot|anthropic|Claude-Web|Google-Extended|Bytespider|CCBot|Applebot-Extended|cohere|Amazonbot|Diffbot|ImagesiftBot|FacebookBot|Meta-ExternalAgent|Meta-ExternalFetcher|Omgilibot|Timpibot|Webzio|YouBot)`)
 
 	// Search and real-time conversational agents (Tier 2): Retrieve live pages to answer user prompts and cite sources.
 	reAISearchBots = regexp.MustCompile(`(?i)(OAI-SearchBot|ChatGPT-User|PerplexityBot)`)
