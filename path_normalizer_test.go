@@ -266,6 +266,33 @@ func TestPathNormalizer_EdgeCases(t *testing.T) {
 			t.Errorf("expected candidates to contain '/.env' after 4 unescaping passes, got %v", candidates)
 		}
 	})
+
+	// P-8: Absolute URI with multi-layer percent-encoded traversal and backslashes
+	t.Run("P-8 absolute URI with multi-layer traversal", func(t *testing.T) {
+		candidates := traefik_warden.ExtractCandidatePaths("", "http://example.com/%252e%252e/.env", "http://example.com/%252e%252e/.env")
+		foundEnv := false
+		for _, c := range candidates {
+			if c == "/.env" {
+				foundEnv = true
+				break
+			}
+		}
+		if !foundEnv {
+			t.Errorf("expected candidates to contain '/.env' from absolute URI, got %v", candidates)
+		}
+
+		candidatesBackslash := traefik_warden.ExtractCandidatePaths("", "http://example.com\\admin\\.env", "http://example.com\\admin\\.env")
+		foundAdminEnv := false
+		for _, c := range candidatesBackslash {
+			if c == "/admin/.env" {
+				foundAdminEnv = true
+				break
+			}
+		}
+		if !foundAdminEnv {
+			t.Errorf("expected candidates to contain '/admin/.env' from backslash absolute URI, got %v", candidatesBackslash)
+		}
+	})
 }
 
 // FuzzExtractCandidatePaths runs continuous fuzzing with randomized inputs to ensure
