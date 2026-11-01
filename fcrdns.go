@@ -10,18 +10,32 @@ import (
 )
 
 var (
-	reGooglebot = regexp.MustCompile(`(?i)(googlebot|google-inspectiontool|google-other|adsbot-google)`)
-	reBingbot   = regexp.MustCompile(`(?i)(bingbot|bingpreview)`)
-	reApplebot  = regexp.MustCompile(`(?i)applebot`)
+	reGooglebot     = regexp.MustCompile(`(?i)(googlebot|google-inspectiontool|google-other|adsbot-google)`)
+	reBingbot       = regexp.MustCompile(`(?i)(bingbot|bingpreview)`)
+	reApplebot      = regexp.MustCompile(`(?i)applebot`)
+	reYandexbot     = regexp.MustCompile(`(?i)(yandexbot|yandeximages|yandexaccessibilitybot|yandexmobilebot|yandexdirect|yandexmetrika)`)
+	reBaiduspider   = regexp.MustCompile(`(?i)baiduspider`)
+	reDuckDuckBot   = regexp.MustCompile(`(?i)duckduckbot`)
+	reYahooSlurp    = regexp.MustCompile(`(?i)(yahoo.*slurp|slurp)`)
+	reNaverYeti     = regexp.MustCompile(`(?i)yeti`)
+	reSogouspider   = regexp.MustCompile(`(?i)sogou.*spider`)
+	reMojeekbot     = regexp.MustCompile(`(?i)mojeekbot`)
 )
 
 // BotSearchEngine represents the claimed search engine identity.
 type BotSearchEngine string
 
 const (
-	EngineGoogle BotSearchEngine = "google"
-	EngineBing   BotSearchEngine = "bing"
-	EngineApple  BotSearchEngine = "apple"
+	EngineGoogle     BotSearchEngine = "google"
+	EngineBing       BotSearchEngine = "bing"
+	EngineApple      BotSearchEngine = "apple"
+	EngineYandex     BotSearchEngine = "yandex"
+	EngineBaidu      BotSearchEngine = "baidu"
+	EngineDuckDuckGo BotSearchEngine = "duckduckgo"
+	EngineYahoo      BotSearchEngine = "yahoo"
+	EngineNaver      BotSearchEngine = "naver"
+	EngineSogou      BotSearchEngine = "sogou"
+	EngineMojeek     BotSearchEngine = "mojeek"
 )
 
 // DetectSearchEngineBot checks if a User-Agent string claims to be a recognized search engine crawler.
@@ -38,6 +52,27 @@ func DetectSearchEngineBot(ua string) (bool, BotSearchEngine) {
 	}
 	if reApplebot.MatchString(ua) {
 		return true, EngineApple
+	}
+	if reYandexbot.MatchString(ua) {
+		return true, EngineYandex
+	}
+	if reBaiduspider.MatchString(ua) {
+		return true, EngineBaidu
+	}
+	if reDuckDuckBot.MatchString(ua) {
+		return true, EngineDuckDuckGo
+	}
+	if reYahooSlurp.MatchString(ua) {
+		return true, EngineYahoo
+	}
+	if reNaverYeti.MatchString(ua) {
+		return true, EngineNaver
+	}
+	if reSogouspider.MatchString(ua) {
+		return true, EngineSogou
+	}
+	if reMojeekbot.MatchString(ua) {
+		return true, EngineMojeek
 	}
 	return false, ""
 }
@@ -98,6 +133,20 @@ func isValidHostForEngine(host string, engine BotSearchEngine) bool {
 		return strings.HasSuffix(h, ".search.msn.com") || h == "search.msn.com"
 	case EngineApple:
 		return strings.HasSuffix(h, ".applebot.apple.com") || h == "applebot.apple.com"
+	case EngineYandex:
+		return strings.HasSuffix(h, ".yandex.ru") || strings.HasSuffix(h, ".yandex.net") || strings.HasSuffix(h, ".yandex.com") || h == "yandex.ru" || h == "yandex.net" || h == "yandex.com"
+	case EngineBaidu:
+		return strings.HasSuffix(h, ".baidu.com") || strings.HasSuffix(h, ".baidu.jp") || h == "baidu.com" || h == "baidu.jp"
+	case EngineDuckDuckGo:
+		return strings.HasSuffix(h, ".duckduckgo.com") || h == "duckduckgo.com"
+	case EngineYahoo:
+		return strings.HasSuffix(h, ".crawl.yahoo.net") || h == "crawl.yahoo.net"
+	case EngineNaver:
+		return strings.HasSuffix(h, ".naver.com") || h == "naver.com"
+	case EngineSogou:
+		return strings.HasSuffix(h, ".sogou.com") || h == "sogou.com"
+	case EngineMojeek:
+		return strings.HasSuffix(h, ".mojeek.com") || h == "mojeek.com"
 	default:
 		return false
 	}
