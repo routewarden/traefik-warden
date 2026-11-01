@@ -61,6 +61,11 @@ func TestRouteWarden_Defaults(t *testing.T) {
 		{"Block docker-compose", "/docker-compose.yml", http.StatusForbidden},
 		{"Block .DS_Store", "/.DS_Store", http.StatusForbidden},
 		{"Block wp-config.php", "/wp-config.php", http.StatusForbidden},
+		{"Block wp-config.php with NTFS ADS", "/wp-config.php::$DATA", http.StatusForbidden},
+		{"Block settings.py with trailing dot", "/settings.py.", http.StatusForbidden},
+		{"Block server.key with trailing space", "/server.key%20", http.StatusForbidden},
+		{"Block database.sqlite3 with NTFS ADS", "/database.sqlite3::$data", http.StatusForbidden},
+		{"Block .env behind dot-ended directory segment", "/sub./.env", http.StatusForbidden},
 
 		// URL-encoded evasion attempts
 		{"Block encoded .env (%2eenv)", "/%2eenv", http.StatusForbidden},
@@ -932,13 +937,22 @@ func TestRouteWarden_CheckQuery_EdgeCases(t *testing.T) {
 	})
 
 	t.Run("Malformed percent-encoding in query", func(t *testing.T) {
-		// %ZZ is not valid percent-encoding; QueryUnescape will error,
-		// code falls back to raw query which still contains .env
+		// %ZZ is not valid percent-encoding; lenientQueryUnescape gracefully skips %ZZ
+		// while correctly decoding the rest of the query
 		req := httptest.NewRequest(http.MethodGet, "/search?file=%ZZ/.env", nil)
 		rr := httptest.NewRecorder()
 		handler.ServeHTTP(rr, req)
 		if rr.Code != http.StatusForbidden {
 			t.Errorf("expected 403 for malformed encoding containing .env, got %d", rr.Code)
+		}
+	})
+
+	t.Run("Malformed percent-encoding with multi-layer traversal in query", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/search?file=%ZZ/%252e%252e/.env", nil)
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		if rr.Code != http.StatusForbidden {
+			t.Errorf("expected 403 for malformed encoding with multi-layer traversal in query, got %d", rr.Code)
 		}
 	})
 
@@ -1229,6 +1243,92 @@ func TestRouteWarden_SecurityLog_Toggling(t *testing.T) {
 	}
 }
 
+func TestRouteWarden_LogSecurityEvent_VerdictAndStatus(t *testing.T) {
+	tests := []struct {
+		name            string
+		mode            string
+		statusCode      int
+		expectedVerdict string
+		expectedStatus  int
+	}{
+		{"json block", "json", 403, "BLOCK", 403},
+		{"fakesuccess", "fakesuccess", 403, "BLOCK", 200},
+		{"tarpit", "tarpit", 403, "TARPIT", 403},
+		{"markovtarpit", "markovtarpit", 200, "TARPIT", 200},
+		{"captcha challenge", "captcha", 403, "CHALLENGE", 403},
+		{"ratelimit", "ratelimit", 403, "BLOCK", 429},
+		{"rate_limit_challenge", "rate_limit_challenge", 429, "CHALLENGE", 429},
+		{"silentdrop", "silentdrop", 403, "BLOCK", 0},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := traefik_warden.CreateConfig()
+			cfg.SecurityLog = true
+			cfg.EnableDefaultPatterns = false
+			cfg.BlockPatterns = []string{"/secret"}
+			cfg.Response = &traefik_warden.ResponseConfig{
+				Mode:       tc.mode,
+				StatusCode: tc.statusCode,
+			}
+			if tc.mode == "tarpit" || tc.mode == "markovtarpit" {
+				cfg.Response.TarpitDelayMs = 1
+				cfg.Response.TarpitMaxDurationSeconds = 1
+			}
+
+			next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			})
+
+			handler, err := traefik_warden.New(context.Background(), next, cfg, "sec-log-test")
+			if err != nil {
+				t.Fatalf("New error: %v", err)
+			}
+
+			// Capture stdout during ServeHTTP
+			oldStdout := os.Stdout
+			rPipe, wPipe, err := os.Pipe()
+			if err != nil {
+				t.Fatalf("pipe error: %v", err)
+			}
+			os.Stdout = wPipe
+
+			req := httptest.NewRequest(http.MethodGet, "/secret", nil)
+			if tc.mode == "tarpit" || tc.mode == "markovtarpit" {
+				ctx, cancel := context.WithCancel(req.Context())
+				cancel()
+				req = req.WithContext(ctx)
+			}
+			rr := httptest.NewRecorder()
+			handler.ServeHTTP(rr, req)
+
+			_ = wPipe.Close()
+			os.Stdout = oldStdout
+
+			var buf bytes.Buffer
+			_, _ = io.Copy(&buf, rPipe)
+			_ = rPipe.Close()
+
+			output := buf.String()
+			if !strings.Contains(output, `"type":"routewarden_block"`) {
+				t.Fatalf("expected stdout to contain routewarden_block, got: %s", output)
+			}
+
+			var event map[string]interface{}
+			if err := json.Unmarshal([]byte(strings.TrimSpace(output)), &event); err != nil {
+				t.Fatalf("failed to unmarshal JSON event: %v, raw: %s", err, output)
+			}
+
+			if v, ok := event["verdict"].(string); !ok || v != tc.expectedVerdict {
+				t.Errorf("expected verdict %q, got %q", tc.expectedVerdict, v)
+			}
+			if s, ok := event["status_code"].(float64); !ok || int(s) != tc.expectedStatus {
+				t.Errorf("expected status_code %d, got %v", tc.expectedStatus, event["status_code"])
+			}
+		})
+	}
+}
+
 func TestRouteWarden_CheckQuery_MalformedUnescape(t *testing.T) {
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -1477,6 +1577,55 @@ func (tc *testBodyCloser) Close() error {
 	return nil
 }
 
+func TestRouteWarden_CheckBody_FormAndJSONUnpacking(t *testing.T) {
+	cfg := traefik_warden.CreateConfig()
+	cfg.EnableDefaultPatterns = false
+	cfg.Methods = []string{"POST"}
+	cfg.CheckBody = true
+	cfg.BlockPatterns = []string{`(?i)\.key$`}
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	handler, err := traefik_warden.New(context.Background(), next, cfg, "body-unpack-test")
+	if err != nil {
+		t.Fatalf("failed to init plugin: %v", err)
+	}
+
+	// 1. Form urlencoded parameter matching end-anchored pattern
+	reqForm := httptest.NewRequest(http.MethodPost, "/upload", strings.NewReader("other=1&cert=server.key&final=ok"))
+	recForm := httptest.NewRecorder()
+	handler.ServeHTTP(recForm, reqForm)
+	if recForm.Code != http.StatusForbidden {
+		t.Errorf("expected 403 for form param server.key, got %d", recForm.Code)
+	}
+
+	// 2. JSON nested object string matching end-anchored pattern
+	reqJSON := httptest.NewRequest(http.MethodPost, "/upload", strings.NewReader(`{"config": {"private_key": "id_rsa.key"}, "status": "active"}`))
+	recJSON := httptest.NewRecorder()
+	handler.ServeHTTP(recJSON, reqJSON)
+	if recJSON.Code != http.StatusForbidden {
+		t.Errorf("expected 403 for JSON nested string id_rsa.key, got %d", recJSON.Code)
+	}
+
+	// 3. JSON array string matching end-anchored pattern
+	reqJSONArr := httptest.NewRequest(http.MethodPost, "/upload", strings.NewReader(`{"files": ["readme.txt", "secret.key"]}`))
+	recJSONArr := httptest.NewRecorder()
+	handler.ServeHTTP(recJSONArr, reqJSONArr)
+	if recJSONArr.Code != http.StatusForbidden {
+		t.Errorf("expected 403 for JSON array item secret.key, got %d", recJSONArr.Code)
+	}
+
+	// 4. Clean JSON should pass
+	reqClean := httptest.NewRequest(http.MethodPost, "/upload", strings.NewReader(`{"files": ["readme.txt", "doc.pdf"]}`))
+	recClean := httptest.NewRecorder()
+	handler.ServeHTTP(recClean, reqClean)
+	if recClean.Code != http.StatusOK {
+		t.Errorf("expected 200 for clean JSON, got %d", recClean.Code)
+	}
+}
+
 // ── IPv6 allowlist tests ────────────────────────────────────────────────────────
 
 func TestRouteWarden_AllowedIPs_IPv6(t *testing.T) {
@@ -1633,6 +1782,61 @@ func TestRouteWarden_CheckBody_BodyPreservedOnAllow(t *testing.T) {
 	}
 }
 
+type errReaderWithData struct {
+	data   []byte
+	err    error
+	offset int
+}
+
+func (r *errReaderWithData) Read(p []byte) (n int, err error) {
+	if r.offset < len(r.data) {
+		n = copy(p, r.data[r.offset:])
+		r.offset += n
+		return n, r.err
+	}
+	return 0, r.err
+}
+
+func (r *errReaderWithData) Close() error {
+	return nil
+}
+
+func TestRouteWarden_CheckBody_BodyPreservedOnPartialReadError(t *testing.T) {
+	cfg := traefik_warden.CreateConfig()
+	cfg.EnableDefaultPatterns = false
+	cfg.Methods = []string{"POST"}
+	cfg.CheckBody = true
+	cfg.CheckBodyPatterns = []string{`(?i)malware`}
+
+	var receivedBody string
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		receivedBody = string(b)
+		w.WriteHeader(http.StatusOK)
+	})
+
+	handler, err := traefik_warden.New(context.Background(), next, cfg, "body-partial-err-test")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	payload := []byte("clean-partial-payload")
+	reader := &errReaderWithData{
+		data: payload,
+		err:  io.ErrUnexpectedEOF,
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/upload", reader)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("expected 200 for partial clean body, got %d", rr.Code)
+	}
+	if receivedBody != string(payload) {
+		t.Errorf("expected downstream to receive %q, got %q", string(payload), receivedBody)
+	}
+}
+
 // ── Query string traversal evasion tests ────────────────────────────────────
 
 func TestRouteWarden_CheckQuery_TraversalVectors(t *testing.T) {
@@ -1666,6 +1870,36 @@ func TestRouteWarden_CheckQuery_TraversalVectors(t *testing.T) {
 		{
 			name: "Actuator in query value",
 			uri:  "/proxy?url=/actuator/env",
+			want: http.StatusForbidden,
+		},
+		{
+			name: "Semicolon delimiter evasion",
+			uri:  "/search?safe=1;file=.env",
+			want: http.StatusForbidden,
+		},
+		{
+			name: "Encoded ampersand delimiter evasion",
+			uri:  "/search?safe=1%26file=.env",
+			want: http.StatusForbidden,
+		},
+		{
+			name: "Encoded semicolon delimiter evasion",
+			uri:  "/search?safe=1%3bfile=.env",
+			want: http.StatusForbidden,
+		},
+		{
+			name: "Uppercase encoded semicolon delimiter evasion",
+			uri:  "/search?safe=1%3Bfile=.env",
+			want: http.StatusForbidden,
+		},
+		{
+			name: "Multiple params sensitive extension",
+			uri:  "/search?file=backup.sql&page=1",
+			want: http.StatusForbidden,
+		},
+		{
+			name: "Query key without slash",
+			uri:  "/search?.env=1",
 			want: http.StatusForbidden,
 		},
 		{
@@ -2984,6 +3218,41 @@ func TestRouteWarden_HoneypotSpiderTrap(t *testing.T) {
 	if recOther.Code != http.StatusOK {
 		t.Fatalf("expected 200 for different unbanned IP, got %d", recOther.Code)
 	}
+
+	// 5. Crawler hits subpath of trap without trailing slash (/hidden-trap/crawler/page)
+	clientSub := "198.51.100.88:23456"
+	reqSubTrap := httptest.NewRequest(http.MethodGet, "/hidden-trap/crawler/page", nil)
+	reqSubTrap.RemoteAddr = clientSub
+	recSubTrap := httptest.NewRecorder()
+	handler.ServeHTTP(recSubTrap, reqSubTrap)
+	if recSubTrap.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 on subpath trap hit, got %d", recSubTrap.Code)
+	}
+
+	// 6. Legitimate request to prefix-collision path (/hidden-trapdoor) must NOT trigger trap
+	clientPrefixSafe := "198.51.100.89:34567"
+	reqPrefixSafe := httptest.NewRequest(http.MethodGet, "/hidden-trapdoor", nil)
+	reqPrefixSafe.RemoteAddr = clientPrefixSafe
+	recPrefixSafe := httptest.NewRecorder()
+	handler.ServeHTTP(recPrefixSafe, reqPrefixSafe)
+	if recPrefixSafe.Code != http.StatusOK {
+		t.Fatalf("expected 200 for prefix-collision path /hidden-trapdoor, got %d", recPrefixSafe.Code)
+	}
+
+	// 7. Honeypot trap configured WITHOUT leading slash (e.g. "no-slash-trap")
+	cfgNoSlash := traefik_warden.CreateConfig()
+	cfgNoSlash.EnableDefaultPatterns = false
+	cfgNoSlash.HoneypotTrapPaths = []string{"no-slash-trap"}
+	hNoSlash, err := traefik_warden.New(context.Background(), next, cfgNoSlash, "trap-no-slash")
+	if err != nil {
+		t.Fatalf("failed to create plugin: %v", err)
+	}
+	reqNoSlash := httptest.NewRequest(http.MethodGet, "/no-slash-trap", nil)
+	recNoSlash := httptest.NewRecorder()
+	hNoSlash.ServeHTTP(recNoSlash, reqNoSlash)
+	if recNoSlash.Code != http.StatusForbidden {
+		t.Errorf("expected 403 on trap path configured without leading slash, got %d", recNoSlash.Code)
+	}
 }
 
 func TestRouteWarden_SearchEngineImpersonation(t *testing.T) {
@@ -3121,6 +3390,30 @@ func TestRouteWarden_BrowserImpersonationAndScriptClients(t *testing.T) {
 	handler.ServeHTTP(recHeadless, reqHeadless)
 	if recHeadless.Code != http.StatusForbidden {
 		t.Errorf("expected playwright client to be blocked with 403, got %d", recHeadless.Code)
+	}
+
+	// 5. Script client with headless playwright header and EMPTY User-Agent -> blocked 403
+	reqEmptyPW := httptest.NewRequest(http.MethodGet, "/index.html", nil)
+	reqEmptyPW.Header.Set("X-Playwright", "true")
+	recEmptyPW := httptest.NewRecorder()
+	handler.ServeHTTP(recEmptyPW, reqEmptyPW)
+	if recEmptyPW.Code != http.StatusForbidden {
+		t.Errorf("expected empty UA with X-Playwright to be blocked with 403, got %d", recEmptyPW.Code)
+	}
+
+	// 6. BlockUserAgents with ^$ matching empty User-Agent
+	cfgEmptyUA := traefik_warden.CreateConfig()
+	cfgEmptyUA.EnableDefaultPatterns = false
+	cfgEmptyUA.BlockUserAgents = []string{"^$"}
+	hEmptyUA, err := traefik_warden.New(context.Background(), next, cfgEmptyUA, "test-empty-ua")
+	if err != nil {
+		t.Fatalf("failed to create handler: %v", err)
+	}
+	reqNoUA := httptest.NewRequest(http.MethodGet, "/index.html", nil)
+	recNoUA := httptest.NewRecorder()
+	hEmptyUA.ServeHTTP(recNoUA, reqNoUA)
+	if recNoUA.Code != http.StatusForbidden {
+		t.Errorf("expected empty User-Agent to be blocked by ^$ pattern, got %d", recNoUA.Code)
 	}
 }
 
@@ -3286,6 +3579,174 @@ func TestRouteWarden_BotDefenseLevelPresets(t *testing.T) {
 	hJSON.ServeHTTP(recJSONSpoofed, reqSpoofed)
 	if recJSONSpoofed.Code != http.StatusOK {
 		t.Errorf("expected spoofed Chrome to pass with JSON explicit override detectBrowserImpersonation: false, got %d", recJSONSpoofed.Code)
+	}
+}
+
+func TestRouteWarden_TrailingSlashMatching(t *testing.T) {
+	cfg := traefik_warden.CreateConfig()
+	cfg.EnableDefaultPatterns = false
+	cfg.BlockPatterns = []string{`(?i)^/admin/$`}
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	handler, err := traefik_warden.New(context.Background(), next, cfg, "trailing-slash-test")
+	if err != nil {
+		t.Fatalf("failed to create handler: %v", err)
+	}
+
+	// 1. Request with trailing slash
+	reqSlash := httptest.NewRequest("GET", "http://example.com/admin/", nil)
+	recSlash := httptest.NewRecorder()
+	handler.ServeHTTP(recSlash, reqSlash)
+	if recSlash.Code != http.StatusForbidden {
+		t.Errorf("expected /admin/ to be blocked with 403, got %d", recSlash.Code)
+	}
+
+	// 2. Request without trailing slash
+	reqNoSlash := httptest.NewRequest("GET", "http://example.com/admin", nil)
+	recNoSlash := httptest.NewRecorder()
+	handler.ServeHTTP(recNoSlash, reqNoSlash)
+	if recNoSlash.Code != http.StatusForbidden {
+		t.Errorf("expected /admin to be blocked with 403 (candidate trailing slash), got %d", recNoSlash.Code)
+	}
+
+	// 3. Subpath should not match exact ^/admin/$
+	reqSubpath := httptest.NewRequest("GET", "http://example.com/admin/users", nil)
+	recSubpath := httptest.NewRecorder()
+	handler.ServeHTTP(recSubpath, reqSubpath)
+	if recSubpath.Code != http.StatusOK {
+		t.Errorf("expected /admin/users to pass with 200, got %d", recSubpath.Code)
+	}
+}
+
+func TestRouteWarden_CheckHeaders_WhitespaceAndQuotes(t *testing.T) {
+	cfg := traefik_warden.CreateConfig()
+	cfg.EnableDefaultPatterns = true
+	cfg.CheckHeaders = []string{"X-Forwarded-Prefix", "X-Rewrite-URL"}
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	handler, err := traefik_warden.New(context.Background(), next, cfg, "check-headers-test")
+	if err != nil {
+		t.Fatalf("failed to create handler: %v", err)
+	}
+
+	cases := []struct {
+		name       string
+		headerKey  string
+		headerVal  string
+		wantStatus int
+	}{
+		{
+			name:       "Header with whitespace",
+			headerKey:  "X-Forwarded-Prefix",
+			headerVal:  "  /.env  ",
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:       "Header wrapped in double quotes",
+			headerKey:  "X-Forwarded-Prefix",
+			headerVal:  `"/wp-config.php"`,
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:       "Header wrapped in single quotes",
+			headerKey:  "X-Rewrite-URL",
+			headerVal:  `'/.env'`,
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:       "Comma-separated header with quotes and spaces",
+			headerKey:  "X-Forwarded-Prefix",
+			headerVal:  `" /safe ", " /.env "`,
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:       "Safe header",
+			headerKey:  "X-Forwarded-Prefix",
+			headerVal:  `"/dashboard"`,
+			wantStatus: http.StatusOK,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", "http://example.com/public", nil)
+			req.Header.Set(tc.headerKey, tc.headerVal)
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+			if rec.Code != tc.wantStatus {
+				t.Errorf("expected status %d, got %d", tc.wantStatus, rec.Code)
+			}
+		})
+	}
+}
+
+func TestRouteWarden_EncodedDelimitersAndWhitespaceEvasion(t *testing.T) {
+	cfg := traefik_warden.CreateConfig()
+	cfg.EnableDefaultPatterns = true
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	handler, err := traefik_warden.New(context.Background(), next, cfg, "encoded-delims-test")
+	if err != nil {
+		t.Fatalf("failed to create handler: %v", err)
+	}
+
+	cases := []struct {
+		name       string
+		path       string
+		wantStatus int
+	}{
+		{
+			name:       "Encoded question mark in sensitive extension (?param)",
+			path:       "/backup.sql%3fparam=value",
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:       "Encoded fragment in sensitive file (#section)",
+			path:       "/database.sql%23section",
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:       "Encoded query and fragment combined (%3f and %23)",
+			path:       "/server.key%3ffoo%23bar",
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:       "Encoded carriage return (%0d)",
+			path:       "/.env%0d",
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:       "Encoded newline (%0a)",
+			path:       "/.env%0a",
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:       "Encoded horizontal tab (%09)",
+			path:       "/.env%09",
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:       "Clean harmless request",
+			path:       "/index.html",
+			wantStatus: http.StatusOK,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", "http://example.com"+tc.path, nil)
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+			if rec.Code != tc.wantStatus {
+				t.Errorf("expected status %d, got %d", tc.wantStatus, rec.Code)
+			}
+		})
 	}
 }
 

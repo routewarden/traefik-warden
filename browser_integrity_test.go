@@ -161,6 +161,28 @@ func TestDetectScriptClient(t *testing.T) {
 			headers:    http.Header{},
 			wantDetect: false,
 		},
+		{
+			name: "empty user-agent with x-playwright header",
+			ua:   "",
+			headers: http.Header{
+				"X-Playwright": []string{"true"},
+			},
+			wantDetect: true,
+		},
+		{
+			name: "empty user-agent with sec-webdriver header",
+			ua:   "",
+			headers: http.Header{
+				"Sec-Webdriver": []string{"?1"},
+			},
+			wantDetect: true,
+		},
+		{
+			name:       "empty user-agent without automation headers",
+			ua:         "",
+			headers:    http.Header{},
+			wantDetect: false,
+		},
 	}
 
 	for _, tc := range tests {

@@ -235,5 +235,11 @@ func cleanIP(raw string) string {
 	if idx := strings.IndexByte(raw, '%'); idx != -1 {
 		raw = raw[:idx]
 	}
+	if parsed := net.ParseIP(raw); parsed != nil {
+		if v4 := parsed.To4(); v4 != nil {
+			return v4.String()
+		}
+		return parsed.String()
+	}
 	return raw
 }

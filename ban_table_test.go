@@ -41,6 +41,28 @@ func TestBanTable_IPv6(t *testing.T) {
 	}
 }
 
+func TestBanTable_IPv4MappedIPv6(t *testing.T) {
+	bt := NewBanTable(100)
+
+	// Ban via standard IPv4
+	bt.Ban("192.0.2.1", 1*time.Minute)
+
+	// Check dual-stack IPv4-mapped IPv6 formats
+	if !bt.IsBanned("::ffff:192.0.2.1") {
+		t.Errorf("expected ::ffff:192.0.2.1 to be recognized as banned")
+	}
+	if !bt.IsBanned("[::ffff:192.0.2.1]:12345") {
+		t.Errorf("expected [::ffff:192.0.2.1]:12345 to be recognized as banned")
+	}
+
+	// Ban via IPv4-mapped IPv6, check via standard IPv4
+	bt2 := NewBanTable(100)
+	bt2.Ban("[::ffff:198.51.100.22]:8080", 1*time.Minute)
+	if !bt2.IsBanned("198.51.100.22") {
+		t.Errorf("expected 198.51.100.22 to be recognized as banned when added via mapped IPv6")
+	}
+}
+
 func TestBanTable_Capacity(t *testing.T) {
 	bt := NewBanTable(2)
 

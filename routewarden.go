@@ -775,9 +775,11 @@ func (rw *RouteWarden) logSecurityEvent(req *http.Request, matchedTarget string,
 	}
 
 	verdict := "BLOCK"
-	if strings.EqualFold(mode, "tarpit") {
+	cleanMode := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(mode), "_", ""))
+	switch cleanMode {
+	case "tarpit", "markovtarpit":
 		verdict = "TARPIT"
-	} else if strings.EqualFold(mode, "challenge") {
+	case "captcha", "ratelimitchallenge", "challenge":
 		verdict = "CHALLENGE"
 	}
 
@@ -932,7 +934,12 @@ func (rw *RouteWarden) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		for _, candPath := range candidatePaths {
 			for _, trapPath := range rw.honeypotTrapPaths {
 				cleanTrap := strings.TrimSpace(trapPath)
-				if cleanTrap != "" && (candPath == cleanTrap || (strings.HasSuffix(cleanTrap, "/") && strings.HasPrefix(candPath, cleanTrap))) {
+				if cleanTrap != "" && !strings.HasPrefix(cleanTrap, "/") {
+					cleanTrap = "/" + cleanTrap
+				}
+				baseTrap := strings.TrimRight(cleanTrap, "/")
+				prefixTrap := baseTrap + "/"
+				if cleanTrap != "" && (candPath == baseTrap || candPath == cleanTrap || (baseTrap != "" && strings.HasPrefix(candPath, prefixTrap))) {
 					if rw.banTable != nil {
 						rw.banTable.Ban(clientIP, rw.trapBanDuration)
 					}
@@ -966,10 +973,7 @@ func (rw *RouteWarden) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	// 3. Optional: Check Query String if enabled
 	if rw.checkQuery && req.URL.RawQuery != "" {
-		unescapedQuery, err := url.QueryUnescape(req.URL.RawQuery)
-		if err != nil {
-			unescapedQuery = req.URL.RawQuery
-		}
+		unescapedQuery := lenientQueryUnescape(req.URL.RawQuery)
 
 		if re := rw.findMatchingBlock(unescapedQuery); re != nil {
 			rw.logDebug("unescaped query %q blocked by pattern %q", unescapedQuery, re.String())
@@ -1012,38 +1016,45 @@ func (rw *RouteWarden) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			}
 		}
 
-		// Also split raw query string on '&' and ';' to catch keys/values even when malformed encodings cause ParseQuery to error
-		for _, pair := range strings.FieldsFunc(req.URL.RawQuery, func(r rune) bool { return r == '&' || r == ';' }) {
-			if k, v, ok := strings.Cut(pair, "="); ok {
-				kCandidates := append([]string{k}, ExtractCandidatePaths("", k, k)...)
-				kCandidates = kCandidates[:len(kCandidates):len(kCandidates)]
-				for _, kc := range kCandidates {
-					if re := rw.findMatchingBlock(kc); re != nil {
-						rw.logDebug("query param key %q blocked by pattern %q", k, re.String())
-						rw.logSecurityEvent(req, k, re.String(), "query_param_blocked")
-						rw.responseHandler.ServeBlockedRequest(w, req)
-						return
+		// Also split raw and unescaped query strings on '&' and ';' to catch keys/values even when
+		// malformed encodings, semicolons, or encoded delimiters (%26, %3b) cause ParseQuery to error
+		queriesToParse := []string{req.URL.RawQuery}
+		if unescapedQuery != req.URL.RawQuery {
+			queriesToParse = append(queriesToParse, unescapedQuery)
+		}
+		for _, qStr := range queriesToParse {
+			for _, pair := range strings.FieldsFunc(qStr, func(r rune) bool { return r == '&' || r == ';' }) {
+				if k, v, ok := strings.Cut(pair, "="); ok {
+					kCandidates := append([]string{k}, ExtractCandidatePaths("", k, k)...)
+					kCandidates = kCandidates[:len(kCandidates):len(kCandidates)]
+					for _, kc := range kCandidates {
+						if re := rw.findMatchingBlock(kc); re != nil {
+							rw.logDebug("query param key %q blocked by pattern %q", k, re.String())
+							rw.logSecurityEvent(req, k, re.String(), "query_param_blocked")
+							rw.responseHandler.ServeBlockedRequest(w, req)
+							return
+						}
 					}
-				}
-				vCandidates := append([]string{v}, ExtractCandidatePaths("", v, v)...)
-				vCandidates = vCandidates[:len(vCandidates):len(vCandidates)]
-				for _, vc := range vCandidates {
-					if re := rw.findMatchingBlock(vc); re != nil {
-						rw.logDebug("query param val %q blocked by pattern %q", v, re.String())
-						rw.logSecurityEvent(req, v, re.String(), "query_param_blocked")
-						rw.responseHandler.ServeBlockedRequest(w, req)
-						return
+					vCandidates := append([]string{v}, ExtractCandidatePaths("", v, v)...)
+					vCandidates = vCandidates[:len(vCandidates):len(vCandidates)]
+					for _, vc := range vCandidates {
+						if re := rw.findMatchingBlock(vc); re != nil {
+							rw.logDebug("query param val %q blocked by pattern %q", v, re.String())
+							rw.logSecurityEvent(req, v, re.String(), "query_param_blocked")
+							rw.responseHandler.ServeBlockedRequest(w, req)
+							return
+						}
 					}
-				}
-			} else if pair != "" {
-				pCandidates := append([]string{pair}, ExtractCandidatePaths("", pair, pair)...)
-				pCandidates = pCandidates[:len(pCandidates):len(pCandidates)]
-				for _, pc := range pCandidates {
-					if re := rw.findMatchingBlock(pc); re != nil {
-						rw.logDebug("query item %q blocked by pattern %q", pair, re.String())
-						rw.logSecurityEvent(req, pair, re.String(), "query_param_blocked")
-						rw.responseHandler.ServeBlockedRequest(w, req)
-						return
+				} else if pair != "" {
+					pCandidates := append([]string{pair}, ExtractCandidatePaths("", pair, pair)...)
+					pCandidates = pCandidates[:len(pCandidates):len(pCandidates)]
+					for _, pc := range pCandidates {
+						if re := rw.findMatchingBlock(pc); re != nil {
+							rw.logDebug("query item %q blocked by pattern %q", pair, re.String())
+							rw.logSecurityEvent(req, pair, re.String(), "query_param_blocked")
+							rw.responseHandler.ServeBlockedRequest(w, req)
+							return
+						}
 					}
 				}
 			}
@@ -1059,10 +1070,26 @@ func (rw *RouteWarden) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 					continue
 				}
 				headerVals := []string{rawHeaderVal}
+				if strings.HasPrefix(rawHeaderVal, "\"") && strings.HasSuffix(rawHeaderVal, "\"") && len(rawHeaderVal) >= 2 {
+					unquoted := strings.TrimSpace(rawHeaderVal[1 : len(rawHeaderVal)-1])
+					if unquoted != "" && unquoted != rawHeaderVal {
+						headerVals = append(headerVals, unquoted)
+					}
+				} else if strings.HasPrefix(rawHeaderVal, "'") && strings.HasSuffix(rawHeaderVal, "'") && len(rawHeaderVal) >= 2 {
+					unquoted := strings.TrimSpace(rawHeaderVal[1 : len(rawHeaderVal)-1])
+					if unquoted != "" && unquoted != rawHeaderVal {
+						headerVals = append(headerVals, unquoted)
+					}
+				}
 				if strings.Contains(rawHeaderVal, ",") {
 					for _, part := range strings.Split(rawHeaderVal, ",") {
 						part = strings.TrimSpace(part)
-						if part != "" && part != rawHeaderVal {
+						if strings.HasPrefix(part, "\"") && strings.HasSuffix(part, "\"") && len(part) >= 2 {
+							part = strings.TrimSpace(part[1 : len(part)-1])
+						} else if strings.HasPrefix(part, "'") && strings.HasSuffix(part, "'") && len(part) >= 2 {
+							part = strings.TrimSpace(part[1 : len(part)-1])
+						}
+						if part != "" {
 							headerVals = append(headerVals, part)
 						}
 					}
@@ -1091,20 +1118,70 @@ func (rw *RouteWarden) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		}
 
 		origBody := req.Body
-		bodyBytes, err := io.ReadAll(io.LimitReader(origBody, maxBytes))
-		if err == nil && len(bodyBytes) > 0 {
+		bodyBytes, _ := io.ReadAll(io.LimitReader(origBody, maxBytes))
+		if len(bodyBytes) > 0 {
 			req.Body = &bodyReadCloser{
 				Reader: io.MultiReader(bytes.NewReader(bodyBytes), origBody),
 				Closer: origBody,
 			}
 
 			bodyStr := string(bodyBytes)
-			unescapedBody, unerr := url.QueryUnescape(bodyStr)
-			if unerr != nil {
-				unescapedBody = bodyStr
-			}
+			unescapedBody := lenientQueryUnescape(bodyStr)
 
 			bodyCandidates := []string{bodyStr, unescapedBody}
+
+			// Form urlencoded parameters extraction (&, ;)
+			if parsedValues, err := url.ParseQuery(bodyStr); err == nil && len(parsedValues) > 0 {
+				for k, vs := range parsedValues {
+					bodyCandidates = append(bodyCandidates, k)
+					bodyCandidates = append(bodyCandidates, ExtractCandidatePaths("", k, k)...)
+					for _, v := range vs {
+						bodyCandidates = append(bodyCandidates, v)
+						bodyCandidates = append(bodyCandidates, ExtractCandidatePaths(v, v, v)...)
+					}
+				}
+			}
+			bodiesToParse := []string{bodyStr}
+			if unescapedBody != bodyStr {
+				bodiesToParse = append(bodiesToParse, unescapedBody)
+			}
+			for _, bStr := range bodiesToParse {
+				for _, pair := range strings.FieldsFunc(bStr, func(r rune) bool { return r == '&' || r == ';' }) {
+					if k, v, ok := strings.Cut(pair, "="); ok {
+						bodyCandidates = append(bodyCandidates, k, v)
+						bodyCandidates = append(bodyCandidates, ExtractCandidatePaths("", k, k)...)
+						bodyCandidates = append(bodyCandidates, ExtractCandidatePaths("", v, v)...)
+					}
+				}
+			}
+
+			// JSON payload string values extraction
+			trimmedBody := strings.TrimSpace(bodyStr)
+			if (strings.HasPrefix(trimmedBody, "{") && strings.HasSuffix(trimmedBody, "}")) ||
+				(strings.HasPrefix(trimmedBody, "[") && strings.HasSuffix(trimmedBody, "]")) {
+				var jsonVal any
+				if err := json.Unmarshal([]byte(trimmedBody), &jsonVal); err == nil {
+					var extractJSON func(v any)
+					extractJSON = func(v any) {
+						switch val := v.(type) {
+						case string:
+							bodyCandidates = append(bodyCandidates, val)
+							bodyCandidates = append(bodyCandidates, ExtractCandidatePaths("", val, val)...)
+						case []any:
+							for _, item := range val {
+								extractJSON(item)
+							}
+						case map[string]any:
+							for k, item := range val {
+								bodyCandidates = append(bodyCandidates, k)
+								bodyCandidates = append(bodyCandidates, ExtractCandidatePaths("", k, k)...)
+								extractJSON(item)
+							}
+						}
+					}
+					extractJSON(jsonVal)
+				}
+			}
 			patternsToCheck := rw.bodyRegexes
 			if len(patternsToCheck) == 0 {
 				patternsToCheck = rw.blockRegexes
