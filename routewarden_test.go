@@ -3253,6 +3253,38 @@ func TestRouteWarden_HoneypotSpiderTrap(t *testing.T) {
 	if recNoSlash.Code != http.StatusForbidden {
 		t.Errorf("expected 403 on trap path configured without leading slash, got %d", recNoSlash.Code)
 	}
+
+	// 8. Case-insensitive matching: uppercase/mixed-case requests must trigger trap
+	reqCase1 := httptest.NewRequest(http.MethodGet, "/HIDDEN-TRAP", nil)
+	reqCase1.RemoteAddr = "198.51.100.95:45678"
+	recCase1 := httptest.NewRecorder()
+	handler.ServeHTTP(recCase1, reqCase1)
+	if recCase1.Code != http.StatusForbidden {
+		t.Errorf("expected 403 for /HIDDEN-TRAP case-insensitive trap hit, got %d", recCase1.Code)
+	}
+
+	reqCase2 := httptest.NewRequest(http.MethodGet, "/Crawler-Trap/Deep/Link", nil)
+	reqCase2.RemoteAddr = "198.51.100.96:45679"
+	recCase2 := httptest.NewRecorder()
+	handler.ServeHTTP(recCase2, reqCase2)
+	if recCase2.Code != http.StatusForbidden {
+		t.Errorf("expected 403 for /Crawler-Trap/Deep/Link case-insensitive trap hit, got %d", recCase2.Code)
+	}
+
+	// 9. Root honeypot trap safeguard: "/" must be ignored and not block root
+	cfgRoot := traefik_warden.CreateConfig()
+	cfgRoot.EnableDefaultPatterns = false
+	cfgRoot.HoneypotTrapPaths = []string{"/", "   "}
+	hRoot, err := traefik_warden.New(context.Background(), next, cfgRoot, "trap-root")
+	if err != nil {
+		t.Fatalf("failed to create plugin: %v", err)
+	}
+	reqRoot := httptest.NewRequest(http.MethodGet, "/", nil)
+	recRoot := httptest.NewRecorder()
+	hRoot.ServeHTTP(recRoot, reqRoot)
+	if recRoot.Code != http.StatusOK {
+		t.Errorf("expected 200 on root when honeypotTrapPaths has '/', got %d", recRoot.Code)
+	}
 }
 
 func TestRouteWarden_SearchEngineImpersonation(t *testing.T) {
