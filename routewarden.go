@@ -895,6 +895,31 @@ func (rw *RouteWarden) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	// Check PoW solution cookie (__rw_pow) or header (X-RW-PoW)
+	powToken := extractPoWToken(req)
+	isPoWValid := false
+	if powToken != "" && rw.responseHandler != nil && rw.responseHandler.config != nil {
+		secret := rw.responseHandler.config.PoWSecret
+		if secret == "" {
+			secret = DefaultPoWSecret
+		}
+		timeout := rw.responseHandler.config.PoWTimeoutSeconds
+		if timeout <= 0 {
+			timeout = DefaultPoWTimeoutSeconds
+		}
+		isPoWValid, _ = VerifyPoWSolution(clientIP, secret, powToken, timeout, time.Now())
+	}
+
+	serveBlock := func(target, pattern, reason string) {
+		if isPoWValid {
+			rw.logDebug("client %s PoW verified, bypassing block %s (%s)", clientIP, pattern, reason)
+			rw.forwardRequest(w, req)
+			return
+		}
+		rw.logSecurityEvent(req, target, pattern, reason)
+		rw.responseHandler.ServeBlockedRequest(w, req)
+	}
+
 	// User-Agent & AI Bot Inspection
 	ua := req.UserAgent()
 	uaAllowed := false
@@ -911,8 +936,7 @@ func (rw *RouteWarden) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			if claimsBot, engine := DetectSearchEngineBot(ua); claimsBot {
 				if !rw.fcrdnsVerifier.Verify(req.Context(), clientIP, engine) {
 					rw.logDebug("client %s spoofed search engine %s (User-Agent: %q), failed FCrDNS", clientIP, engine, ua)
-					rw.logSecurityEvent(req, ua, string(engine)+"_spoofed", "search_engine_spoofed")
-					rw.responseHandler.ServeBlockedRequest(w, req)
+					serveBlock(ua, string(engine)+"_spoofed", "search_engine_spoofed")
 					return
 				}
 				// Verified legitimate search engine spider; exempt from generic bot blocks
@@ -961,8 +985,7 @@ func (rw *RouteWarden) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 		if uaBlocked {
 			rw.logDebug("client %s User-Agent %q blocked by pattern %q (reason: %s)", clientIP, ua, uaPattern, uaReason)
-			rw.logSecurityEvent(req, ua, uaPattern, uaReason)
-			rw.responseHandler.ServeBlockedRequest(w, req)
+			serveBlock(ua, uaPattern, uaReason)
 			return
 		}
 	}
@@ -1027,8 +1050,7 @@ func (rw *RouteWarden) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			}
 			matchedPattern := fmt.Sprintf("AS%d (%s)", cloudASN, provider)
 			rw.logDebug("client %s origin ASN %d (%s) blocked by cloud host classifier (reason: %s)", clientIP, cloudASN, provider, reason)
-			rw.logSecurityEvent(req, clientIP, matchedPattern, reason)
-			rw.responseHandler.ServeBlockedRequest(w, req)
+			serveBlock(clientIP, matchedPattern, reason)
 			return
 		}
 	}
@@ -1037,8 +1059,7 @@ func (rw *RouteWarden) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	for _, p := range candidatePaths {
 		if re := rw.findMatchingBlock(p); re != nil {
 			rw.logDebug("path %q blocked by pattern %q (mode: %s)", p, re.String(), rw.responseHandler.config.Mode)
-			rw.logSecurityEvent(req, p, re.String(), "path_blocked")
-			rw.responseHandler.ServeBlockedRequest(w, req)
+			serveBlock(p, re.String(), "path_blocked")
 			return
 		}
 	}
@@ -1049,14 +1070,12 @@ func (rw *RouteWarden) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 		if re := rw.findMatchingBlock(unescapedQuery); re != nil {
 			rw.logDebug("unescaped query %q blocked by pattern %q", unescapedQuery, re.String())
-			rw.logSecurityEvent(req, unescapedQuery, re.String(), "query_blocked")
-			rw.responseHandler.ServeBlockedRequest(w, req)
+			serveBlock(unescapedQuery, re.String(), "query_blocked")
 			return
 		}
 		if re := rw.findMatchingBlock(req.URL.RawQuery); re != nil {
 			rw.logDebug("raw query %q blocked by pattern %q", req.URL.RawQuery, re.String())
-			rw.logSecurityEvent(req, req.URL.RawQuery, re.String(), "query_blocked")
-			rw.responseHandler.ServeBlockedRequest(w, req)
+			serveBlock(req.URL.RawQuery, re.String(), "query_blocked")
 			return
 		}
 
@@ -1069,8 +1088,7 @@ func (rw *RouteWarden) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			for _, kc := range keyCandidates {
 				if re := rw.findMatchingBlock(kc); re != nil {
 					rw.logDebug("query param key %q blocked by pattern %q", key, re.String())
-					rw.logSecurityEvent(req, key, re.String(), "query_param_blocked")
-					rw.responseHandler.ServeBlockedRequest(w, req)
+					serveBlock(key, re.String(), "query_param_blocked")
 					return
 				}
 			}
@@ -1080,8 +1098,7 @@ func (rw *RouteWarden) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				for _, vc := range valCandidates {
 					if re := rw.findMatchingBlock(vc); re != nil {
 						rw.logDebug("query param %q with value %q blocked by pattern %q", key, val, re.String())
-						rw.logSecurityEvent(req, val, re.String(), "query_param_blocked")
-						rw.responseHandler.ServeBlockedRequest(w, req)
+						serveBlock(val, re.String(), "query_param_blocked")
 						return
 					}
 				}
@@ -1102,8 +1119,7 @@ func (rw *RouteWarden) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 					for _, kc := range kCandidates {
 						if re := rw.findMatchingBlock(kc); re != nil {
 							rw.logDebug("query param key %q blocked by pattern %q", k, re.String())
-							rw.logSecurityEvent(req, k, re.String(), "query_param_blocked")
-							rw.responseHandler.ServeBlockedRequest(w, req)
+							serveBlock(k, re.String(), "query_param_blocked")
 							return
 						}
 					}
@@ -1112,8 +1128,7 @@ func (rw *RouteWarden) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 					for _, vc := range vCandidates {
 						if re := rw.findMatchingBlock(vc); re != nil {
 							rw.logDebug("query param val %q blocked by pattern %q", v, re.String())
-							rw.logSecurityEvent(req, v, re.String(), "query_param_blocked")
-							rw.responseHandler.ServeBlockedRequest(w, req)
+							serveBlock(v, re.String(), "query_param_blocked")
 							return
 						}
 					}
@@ -1123,8 +1138,7 @@ func (rw *RouteWarden) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 					for _, pc := range pCandidates {
 						if re := rw.findMatchingBlock(pc); re != nil {
 							rw.logDebug("query item %q blocked by pattern %q", pair, re.String())
-							rw.logSecurityEvent(req, pair, re.String(), "query_param_blocked")
-							rw.responseHandler.ServeBlockedRequest(w, req)
+							serveBlock(pair, re.String(), "query_param_blocked")
 							return
 						}
 					}
@@ -1172,8 +1186,7 @@ func (rw *RouteWarden) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 					for _, hc := range headerCandidates {
 						if re := rw.findMatchingBlock(hc); re != nil {
 							rw.logDebug("header %q with value %q blocked by pattern %q", headerName, headerVal, re.String())
-							rw.logSecurityEvent(req, rawHeaderVal, re.String(), "header_blocked")
-							rw.responseHandler.ServeBlockedRequest(w, req)
+							serveBlock(rawHeaderVal, re.String(), "header_blocked")
 							return
 						}
 					}
@@ -1263,8 +1276,7 @@ func (rw *RouteWarden) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				for _, re := range patternsToCheck {
 					if re.MatchString(bc) {
 						rw.logDebug("body payload blocked by pattern %q", re.String())
-						rw.logSecurityEvent(req, "[body payload]", re.String(), "body_blocked")
-						rw.responseHandler.ServeBlockedRequest(w, req)
+						serveBlock("[body payload]", re.String(), "body_blocked")
 						return
 					}
 				}

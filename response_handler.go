@@ -148,6 +148,8 @@ func NewResponseHandler(respCfg *ResponseConfig, topStatusCode int, topCustomTex
 					respCfg.StatusCode = http.StatusOK
 				case "ratelimit", "ratelimitchallenge", "backoff":
 					respCfg.StatusCode = http.StatusTooManyRequests
+				case "powchallenge", "pow", "proofofwork", "hashcash":
+					respCfg.StatusCode = http.StatusTooManyRequests
 				case "redirect":
 					respCfg.StatusCode = http.StatusFound
 				default:
@@ -510,6 +512,42 @@ func (h *ResponseHandler) ServeBlockedRequest(w http.ResponseWriter, req *http.R
 		}
 		_, _ = fmt.Fprintln(w, body)
 
+	case "powchallenge", "pow", "proofofwork", "hashcash":
+		clientIP := ""
+		if req != nil {
+			clientIP = req.RemoteAddr
+			if xff := req.Header.Get("X-Forwarded-For"); xff != "" {
+				clientIP = strings.TrimSpace(strings.Split(xff, ",")[0])
+			} else if xri := req.Header.Get("X-Real-IP"); xri != "" {
+				clientIP = strings.TrimSpace(xri)
+			}
+		}
+		secret := h.config.PoWSecret
+		if secret == "" {
+			secret = DefaultPoWSecret
+		}
+		difficulty := h.config.PoWDifficulty
+		if difficulty <= 0 {
+			difficulty = DefaultPoWDifficulty
+		}
+		timeout := h.config.PoWTimeoutSeconds
+		if timeout <= 0 {
+			timeout = DefaultPoWTimeoutSeconds
+		}
+
+		challenge, err := GeneratePoWChallenge(clientIP, secret, difficulty, time.Now())
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = fmt.Fprintln(w, "Failed to generate security verification challenge")
+			return
+		}
+
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
+		w.WriteHeader(statusCode)
+		html := GeneratePoWHTML(challenge, difficulty, timeout)
+		_, _ = fmt.Fprintln(w, html)
+
 	case "xml":
 		contentType := h.config.ContentType
 		if contentType == "" {
@@ -727,6 +765,11 @@ func (h *ResponseHandler) EffectiveStatusCode() int {
 		}
 		return code
 	case "ratelimit", "ratelimitchallenge", "backoff":
+		if code == 0 || code == http.StatusForbidden {
+			return http.StatusTooManyRequests
+		}
+		return code
+	case "powchallenge", "pow", "proofofwork", "hashcash":
 		if code == 0 || code == http.StatusForbidden {
 			return http.StatusTooManyRequests
 		}

@@ -85,6 +85,9 @@ type ResponseConfig struct {
 	TarpitDelayMs            int               `json:"tarpitDelayMs,omitempty"`            // Milliseconds between bytes for tarpit mode (default: 1000)
 	TarpitMaxDurationSeconds int               `json:"tarpitMaxDurationSeconds,omitempty"` // Max seconds before terminating tarpit connection (default: 60)
 	StreamSizeMB             int               `json:"streamSizeMB,omitempty"`             // Size in Megabytes for infiniteStream/garbageStream mode (default: 100)
+	PoWDifficulty            int               `json:"powDifficulty,omitempty"`            // Number of leading zero bits required (default: 16)
+	PoWSecret                string            `json:"powSecret,omitempty"`                // Secret key for HMAC token signing
+	PoWTimeoutSeconds        int               `json:"powTimeoutSeconds,omitempty"`        // Challenge validity window in seconds (default: 300)
 }
 
 // Config holds the plugin configuration.
