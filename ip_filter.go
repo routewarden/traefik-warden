@@ -81,6 +81,18 @@ func NewIPFilter(allowedIPs []string, trustedProxies []string) (*IPFilter, error
 	}, nil
 }
 
+// IsBlockedASN returns true and the ASN number if the client IP belongs to a blocked ASN.
+func (f *IPFilter) IsBlockedASN(req *http.Request) (bool, uint32) {
+	if f == nil || f.asn == nil {
+		return false, 0
+	}
+	address := cleanIP(req.RemoteAddr)
+	if len(f.trustedNets) > 0 {
+		address = f.extractClientIP(req)
+	}
+	return f.asn.IsBlocked(address)
+}
+
 // IsAllowed returns true if the client IP in the request matches any whitelisted IP or subnet.
 func (f *IPFilter) IsAllowed(req *http.Request) bool {
 	if f.asn != nil {
@@ -222,6 +234,12 @@ func cleanIP(raw string) string {
 	raw = strings.Trim(raw, "[]")
 	if idx := strings.IndexByte(raw, '%'); idx != -1 {
 		raw = raw[:idx]
+	}
+	if parsed := net.ParseIP(raw); parsed != nil {
+		if v4 := parsed.To4(); v4 != nil {
+			return v4.String()
+		}
+		return parsed.String()
 	}
 	return raw
 }

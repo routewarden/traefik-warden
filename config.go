@@ -3,6 +3,7 @@ package traefik_warden
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 )
 
 // DefaultBlockPatterns contains well-known sensitive endpoints and file extensions.
@@ -84,6 +85,9 @@ type ResponseConfig struct {
 	TarpitDelayMs            int               `json:"tarpitDelayMs,omitempty"`            // Milliseconds between bytes for tarpit mode (default: 1000)
 	TarpitMaxDurationSeconds int               `json:"tarpitMaxDurationSeconds,omitempty"` // Max seconds before terminating tarpit connection (default: 60)
 	StreamSizeMB             int               `json:"streamSizeMB,omitempty"`             // Size in Megabytes for infiniteStream/garbageStream mode (default: 100)
+	PoWDifficulty            int               `json:"powDifficulty,omitempty"`            // Number of leading zero bits required (default: 16)
+	PoWSecret                string            `json:"powSecret,omitempty"`                // Secret key for HMAC token signing
+	PoWTimeoutSeconds        int               `json:"powTimeoutSeconds,omitempty"`        // Challenge validity window in seconds (default: 300)
 }
 
 // Config holds the plugin configuration.
@@ -97,7 +101,21 @@ type Config struct {
 	BlockPatterns              []string `json:"blockPatterns,omitempty"`
 	AllowPatterns              []string `json:"allowPatterns,omitempty"`
 	AllowedASNs                []string `json:"allowedASNs,omitempty"`
+	BlockedASNs                []string `json:"blockedASNs,omitempty"`
 	ASNDB                      string   `json:"asnDB,omitempty"`
+	BotDefenseLevel            string   `json:"botDefenseLevel,omitempty"`
+	BlockAIBots                bool     `json:"blockAIBots,omitempty"`
+	AIBotProfile               string   `json:"aiBotProfile,omitempty"`
+	BlockUserAgents            []string `json:"blockUserAgents,omitempty"`
+	AllowUserAgents            []string `json:"allowUserAgents,omitempty"`
+	HoneypotTrapPaths          []string `json:"honeypotTrapPaths,omitempty"`
+	EnableRobotsTxtHoneypot    bool     `json:"enableRobotsTxtHoneypot,omitempty"`
+	RobotsTxtHoneypotSecret    string   `json:"robotsTxtHoneypotSecret,omitempty"`
+	TrapBanDuration            string   `json:"trapBanDuration,omitempty"`
+	VerifySearchEngineBots     bool     `json:"verifySearchEngineBots,omitempty"`
+	DetectBrowserImpersonation bool     `json:"detectBrowserImpersonation,omitempty"`
+	BlockScriptClients         bool     `json:"blockScriptClients,omitempty"`
+	BlockCloudHosts            bool     `json:"blockCloudHosts,omitempty"` // Block traffic originating from datacenter/cloud hosting ASNs
 	AllowedIPs                 []string `json:"allowedIps,omitempty"` // Whitelist of IPs or CIDR subnets exempt from blocking
 	// TrustedProxies lists IPs/CIDRs of upstream proxies (e.g. Traefik, load-balancers) whose
 	// X-Forwarded-For and X-Real-IP headers are trusted when resolving the real client IP.
@@ -116,6 +134,56 @@ type Config struct {
 	Debug              bool            `json:"debug,omitempty"`             // Enable verbose debug logging to stdout/stderr
 	SecurityLog        bool            `json:"securityLog,omitempty"`       // Emit structured JSON security audit events (CrowdSec/SIEM compatible) on block
 	Response           *ResponseConfig `json:"response,omitempty"`
+	ExplicitFields     []string        `json:"explicitFields,omitempty"`
+}
+
+// MarkExplicit records one or more fields as explicitly configured by the user.
+func (c *Config) MarkExplicit(fields ...string) {
+	for _, field := range fields {
+		found := false
+		for _, ef := range c.ExplicitFields {
+			if strings.EqualFold(ef, field) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			c.ExplicitFields = append(c.ExplicitFields, field)
+		}
+	}
+}
+
+// IsExplicit returns true if any of the passed field names were explicitly configured.
+func (c *Config) IsExplicit(fields ...string) bool {
+	for _, field := range fields {
+		for _, ef := range c.ExplicitFields {
+			if strings.EqualFold(ef, field) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// UnmarshalJSON implements custom JSON unmarshaling to track all explicitly passed configuration keys.
+func (c *Config) UnmarshalJSON(data []byte) error {
+	type rawConfig Config
+	raw := rawConfig(*c)
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	*c = Config(raw)
+	if c.Response == nil {
+		c.Response = &ResponseConfig{Mode: "text"}
+	}
+
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(data, &obj); err == nil {
+		for k := range obj {
+			c.MarkExplicit(k)
+		}
+	}
+	return nil
 }
 
 // CreateConfig creates the default plugin configuration.

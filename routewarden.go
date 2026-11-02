@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -25,7 +26,22 @@ type RouteWarden struct {
 	blockRegexes      []*regexp.Regexp
 	allowRegexes      []*regexp.Regexp
 	bodyRegexes       []*regexp.Regexp
-	ipFilter          *IPFilter
+	blockUAPatterns   []*regexp.Regexp
+	allowUAPatterns   []*regexp.Regexp
+	botDefenseLevel   string
+	blockAIBots       bool
+	aiBotProfile      string
+	honeypotTrapPaths          []string
+	enableRobotsTxtHoneypot    bool
+	robotsTxtHoneypotSecret    string
+	banTable                   *BanTable
+	trapBanDuration            time.Duration
+	verifySearchEngineBots     bool
+	fcrdnsVerifier             *FCrDNSVerifier
+	detectBrowserImpersonation bool
+	blockScriptClients         bool
+	blockCloudHosts            bool
+	ipFilter                   *IPFilter
 	checkQuery        bool
 	checkHeaders      []string
 	checkBody         bool
@@ -83,8 +99,36 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 			AllowPatternsSnake              []string              `json:"allow_patterns"`
 			AllowedASNs                     []string              `json:"allowedASNs"`
 			AllowedASNsSnake                []string              `json:"allowed_asns"`
+			BlockedASNs                     []string              `json:"blockedASNs"`
+			BlockedASNsSnake                []string              `json:"blocked_asns"`
 			ASNDB                           string                `json:"asnDB"`
 			ASNDBSnake                      string                `json:"asn_db"`
+			BotDefenseLevel                 *string               `json:"botDefenseLevel"`
+			BotDefenseLevelSnake            *string               `json:"bot_defense_level"`
+			BlockAIBots                     *bool                 `json:"blockAIBots"`
+			BlockAIBotsSnake                *bool                 `json:"block_ai_bots"`
+			AIBotProfile                    *string               `json:"aiBotProfile"`
+			AIBotProfileSnake               *string               `json:"ai_bot_profile"`
+			BlockUserAgents                 []string              `json:"blockUserAgents"`
+			BlockUserAgentsSnake            []string              `json:"block_user_agents"`
+			AllowUserAgents                 []string              `json:"allowUserAgents"`
+			AllowUserAgentsSnake            []string              `json:"allow_user_agents"`
+			HoneypotTrapPaths               []string              `json:"honeypotTrapPaths"`
+			HoneypotTrapPathsSnake          []string              `json:"honeypot_trap_paths"`
+			EnableRobotsTxtHoneypot         *bool                 `json:"enableRobotsTxtHoneypot"`
+			EnableRobotsTxtHoneypotSnake    *bool                 `json:"enable_robots_txt_honeypot"`
+			RobotsTxtHoneypotSecret         *string               `json:"robotsTxtHoneypotSecret"`
+			RobotsTxtHoneypotSecretSnake    *string               `json:"robots_txt_honeypot_secret"`
+			TrapBanDuration                 *string               `json:"trapBanDuration"`
+			TrapBanDurationSnake            *string               `json:"trap_ban_duration"`
+			VerifySearchEngineBots          *bool                 `json:"verifySearchEngineBots"`
+			VerifySearchEngineBotsSnake     *bool                 `json:"verify_search_engine_bots"`
+			DetectBrowserImpersonation      *bool                 `json:"detectBrowserImpersonation"`
+			DetectBrowserImpersonationSnake *bool                 `json:"detect_browser_impersonation"`
+			BlockScriptClients              *bool                 `json:"blockScriptClients"`
+			BlockScriptClientsSnake         *bool                 `json:"block_script_clients"`
+			BlockCloudHosts                 *bool                 `json:"blockCloudHosts"`
+			BlockCloudHostsSnake            *bool                 `json:"block_cloud_hosts"`
 			AllowedIPs                      []string              `json:"allowedIps"`
 			AllowedIPsSnake                 []string              `json:"allowed_ips"`
 			TrustedProxies                  []string              `json:"trustedProxies"`
@@ -108,6 +152,8 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 			Debug                           *bool                 `json:"debug"`
 			SecurityLog                     *bool                 `json:"securityLog"`
 			SecurityLogSnake                *bool                 `json:"security_log"`
+			ExplicitFields                  []string              `json:"explicitFields"`
+			ExplicitFieldsSnake             []string              `json:"explicit_fields"`
 			Response                        *sharedResponseConfig `json:"response"`
 		}
 
@@ -146,9 +192,105 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		} else if len(scf.AllowedASNsSnake) > 0 {
 			fileCfg.AllowedASNs = scf.AllowedASNsSnake
 		}
+		if len(scf.BlockedASNs) > 0 {
+			fileCfg.BlockedASNs = scf.BlockedASNs
+		} else if len(scf.BlockedASNsSnake) > 0 {
+			fileCfg.BlockedASNs = scf.BlockedASNsSnake
+		}
 		fileCfg.ASNDB = scf.ASNDB
 		if scf.ASNDBSnake != "" {
 			fileCfg.ASNDB = scf.ASNDBSnake
+		}
+		if len(scf.ExplicitFields) > 0 {
+			fileCfg.ExplicitFields = append(fileCfg.ExplicitFields, scf.ExplicitFields...)
+		}
+		if len(scf.ExplicitFieldsSnake) > 0 {
+			fileCfg.ExplicitFields = append(fileCfg.ExplicitFields, scf.ExplicitFieldsSnake...)
+		}
+		if scf.BotDefenseLevel != nil {
+			fileCfg.BotDefenseLevel = *scf.BotDefenseLevel
+		} else if scf.BotDefenseLevelSnake != nil {
+			fileCfg.BotDefenseLevel = *scf.BotDefenseLevelSnake
+		}
+		if fileCfg.BotDefenseLevel != "" {
+			fileCfg.applyBotDefense(fileCfg.BotDefenseLevel)
+		}
+
+		if scf.BlockAIBots != nil {
+			fileCfg.BlockAIBots = *scf.BlockAIBots
+			fileCfg.MarkExplicit("blockAIBots")
+		} else if scf.BlockAIBotsSnake != nil {
+			fileCfg.BlockAIBots = *scf.BlockAIBotsSnake
+			fileCfg.MarkExplicit("blockAIBots")
+		}
+		if scf.AIBotProfile != nil {
+			fileCfg.AIBotProfile = *scf.AIBotProfile
+			fileCfg.MarkExplicit("aiBotProfile")
+		} else if scf.AIBotProfileSnake != nil {
+			fileCfg.AIBotProfile = *scf.AIBotProfileSnake
+			fileCfg.MarkExplicit("aiBotProfile")
+		}
+		if len(scf.BlockUserAgents) > 0 {
+			fileCfg.BlockUserAgents = scf.BlockUserAgents
+		} else if len(scf.BlockUserAgentsSnake) > 0 {
+			fileCfg.BlockUserAgents = scf.BlockUserAgentsSnake
+		}
+		if len(scf.AllowUserAgents) > 0 {
+			fileCfg.AllowUserAgents = scf.AllowUserAgents
+		} else if len(scf.AllowUserAgentsSnake) > 0 {
+			fileCfg.AllowUserAgents = scf.AllowUserAgentsSnake
+		}
+		if len(scf.HoneypotTrapPaths) > 0 {
+			fileCfg.HoneypotTrapPaths = scf.HoneypotTrapPaths
+		} else if len(scf.HoneypotTrapPathsSnake) > 0 {
+			fileCfg.HoneypotTrapPaths = scf.HoneypotTrapPathsSnake
+		}
+		if scf.EnableRobotsTxtHoneypot != nil {
+			fileCfg.EnableRobotsTxtHoneypot = *scf.EnableRobotsTxtHoneypot
+			fileCfg.MarkExplicit("enableRobotsTxtHoneypot")
+		} else if scf.EnableRobotsTxtHoneypotSnake != nil {
+			fileCfg.EnableRobotsTxtHoneypot = *scf.EnableRobotsTxtHoneypotSnake
+			fileCfg.MarkExplicit("enableRobotsTxtHoneypot")
+		}
+		if scf.RobotsTxtHoneypotSecret != nil {
+			fileCfg.RobotsTxtHoneypotSecret = *scf.RobotsTxtHoneypotSecret
+			fileCfg.MarkExplicit("robotsTxtHoneypotSecret")
+		} else if scf.RobotsTxtHoneypotSecretSnake != nil {
+			fileCfg.RobotsTxtHoneypotSecret = *scf.RobotsTxtHoneypotSecretSnake
+			fileCfg.MarkExplicit("robotsTxtHoneypotSecret")
+		}
+		if scf.TrapBanDuration != nil {
+			fileCfg.TrapBanDuration = *scf.TrapBanDuration
+		} else if scf.TrapBanDurationSnake != nil {
+			fileCfg.TrapBanDuration = *scf.TrapBanDurationSnake
+		}
+		if scf.VerifySearchEngineBots != nil {
+			fileCfg.VerifySearchEngineBots = *scf.VerifySearchEngineBots
+			fileCfg.MarkExplicit("verifySearchEngineBots")
+		} else if scf.VerifySearchEngineBotsSnake != nil {
+			fileCfg.VerifySearchEngineBots = *scf.VerifySearchEngineBotsSnake
+			fileCfg.MarkExplicit("verifySearchEngineBots")
+		}
+		if scf.DetectBrowserImpersonation != nil {
+			fileCfg.DetectBrowserImpersonation = *scf.DetectBrowserImpersonation
+			fileCfg.MarkExplicit("detectBrowserImpersonation")
+		} else if scf.DetectBrowserImpersonationSnake != nil {
+			fileCfg.DetectBrowserImpersonation = *scf.DetectBrowserImpersonationSnake
+			fileCfg.MarkExplicit("detectBrowserImpersonation")
+		}
+		if scf.BlockScriptClients != nil {
+			fileCfg.BlockScriptClients = *scf.BlockScriptClients
+			fileCfg.MarkExplicit("blockScriptClients")
+		} else if scf.BlockScriptClientsSnake != nil {
+			fileCfg.BlockScriptClients = *scf.BlockScriptClientsSnake
+			fileCfg.MarkExplicit("blockScriptClients")
+		}
+		if scf.BlockCloudHosts != nil {
+			fileCfg.BlockCloudHosts = *scf.BlockCloudHosts
+			fileCfg.MarkExplicit("blockCloudHosts")
+		} else if scf.BlockCloudHostsSnake != nil {
+			fileCfg.BlockCloudHosts = *scf.BlockCloudHostsSnake
+			fileCfg.MarkExplicit("blockCloudHosts")
 		}
 		if len(scf.AllowedIPs) > 0 {
 			fileCfg.AllowedIPs = scf.AllowedIPs
@@ -292,8 +434,51 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		if config.AllowedASNs != nil {
 			fileCfg.AllowedASNs = config.AllowedASNs
 		}
+		if config.BlockedASNs != nil {
+			fileCfg.BlockedASNs = config.BlockedASNs
+		}
 		if config.ASNDB != "" {
 			fileCfg.ASNDB = config.ASNDB
+		}
+		if config.BotDefenseLevel != "" {
+			fileCfg.BotDefenseLevel = config.BotDefenseLevel
+			fileCfg.applyBotDefense(config.BotDefenseLevel)
+		}
+		if config.IsExplicit("blockAIBots", "block_ai_bots") || config.BlockAIBots {
+			fileCfg.BlockAIBots = config.BlockAIBots
+		}
+		if config.IsExplicit("aiBotProfile", "ai_bot_profile") || config.AIBotProfile != "" {
+			fileCfg.AIBotProfile = config.AIBotProfile
+		}
+		if len(config.BlockUserAgents) > 0 {
+			fileCfg.BlockUserAgents = config.BlockUserAgents
+		}
+		if len(config.AllowUserAgents) > 0 {
+			fileCfg.AllowUserAgents = config.AllowUserAgents
+		}
+		if len(config.HoneypotTrapPaths) > 0 {
+			fileCfg.HoneypotTrapPaths = config.HoneypotTrapPaths
+		}
+		if config.IsExplicit("enableRobotsTxtHoneypot", "enable_robots_txt_honeypot") || config.EnableRobotsTxtHoneypot {
+			fileCfg.EnableRobotsTxtHoneypot = config.EnableRobotsTxtHoneypot
+		}
+		if config.IsExplicit("robotsTxtHoneypotSecret", "robots_txt_honeypot_secret") || config.RobotsTxtHoneypotSecret != "" {
+			fileCfg.RobotsTxtHoneypotSecret = config.RobotsTxtHoneypotSecret
+		}
+		if config.TrapBanDuration != "" {
+			fileCfg.TrapBanDuration = config.TrapBanDuration
+		}
+		if config.IsExplicit("verifySearchEngineBots", "verify_search_engine_bots") || config.VerifySearchEngineBots {
+			fileCfg.VerifySearchEngineBots = config.VerifySearchEngineBots
+		}
+		if config.IsExplicit("detectBrowserImpersonation", "detect_browser_impersonation") || config.DetectBrowserImpersonation {
+			fileCfg.DetectBrowserImpersonation = config.DetectBrowserImpersonation
+		}
+		if config.IsExplicit("blockScriptClients", "block_script_clients") || config.BlockScriptClients {
+			fileCfg.BlockScriptClients = config.BlockScriptClients
+		}
+		if config.IsExplicit("blockCloudHosts", "block_cloud_hosts") || config.BlockCloudHosts {
+			fileCfg.BlockCloudHosts = config.BlockCloudHosts
 		}
 		if len(config.AllowedIPs) > 0 {
 			fileCfg.AllowedIPs = config.AllowedIPs
@@ -386,6 +571,12 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		// Keep configFile path so callers can inspect it, but continue with merged config.
 		fileCfg.ConfigFile = config.ConfigFile
 		config = fileCfg
+	} else if config.BotDefenseLevel != "" {
+		config.applyBotDefense(config.BotDefenseLevel)
+	}
+
+	if config.BlockAIBots && config.AIBotProfile == "" {
+		config.AIBotProfile = "train_only"
 	}
 
 	methodsMap := make(map[string]struct{})
@@ -462,9 +653,33 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		return nil, fmt.Errorf("routewarden [%s]: %w", name, err)
 	}
 
-	ipFilter.asn, err = NewASNFilter(config.AllowedASNs, config.ASNDB)
+	ipFilter.asn, err = NewASNFilterEx(config.AllowedASNs, config.BlockedASNs, config.ASNDB, config.BlockCloudHosts)
 	if err != nil {
 		return nil, fmt.Errorf("routewarden [%s]: %w", name, err)
+	}
+
+	compiledBlockUARegexes := make([]*regexp.Regexp, 0, len(config.BlockUserAgents))
+	for _, p := range config.BlockUserAgents {
+		if strings.TrimSpace(p) == "" {
+			continue
+		}
+		re, err := regexp.Compile(p)
+		if err != nil {
+			return nil, fmt.Errorf("routewarden [%s]: invalid block user agent regex pattern %q: %w", name, p, err)
+		}
+		compiledBlockUARegexes = append(compiledBlockUARegexes, re)
+	}
+
+	compiledAllowUARegexes := make([]*regexp.Regexp, 0, len(config.AllowUserAgents))
+	for _, p := range config.AllowUserAgents {
+		if strings.TrimSpace(p) == "" {
+			continue
+		}
+		re, err := regexp.Compile(p)
+		if err != nil {
+			return nil, fmt.Errorf("routewarden [%s]: invalid allow user agent regex pattern %q: %w", name, p, err)
+		}
+		compiledAllowUARegexes = append(compiledAllowUARegexes, re)
 	}
 
 	respConfig := config.Response
@@ -506,17 +721,43 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		bodyMaxBytes = 64 * 1024
 	}
 
+	banDuration := ParseBanDuration(config.TrapBanDuration)
+	var banTable *BanTable
+	if len(config.HoneypotTrapPaths) > 0 || config.EnableRobotsTxtHoneypot {
+		banTable = NewBanTable(10000)
+	}
+
+	var fcrdns *FCrDNSVerifier
+	if config.VerifySearchEngineBots {
+		fcrdns = NewFCrDNSVerifier(6*time.Hour, 500*time.Millisecond)
+	}
+
 	rw := &RouteWarden{
-		next:              next,
-		name:              name,
-		enabled:           config.Enabled,
-		debug:             config.Debug,
-		securityLog:       config.SecurityLog,
-		methods:           methodsMap,
-		blockRegexes:      compiledBlockRegexes,
-		allowRegexes:      compiledAllowRegexes,
-		bodyRegexes:       compiledBodyRegexes,
-		ipFilter:          ipFilter,
+		next:                   next,
+		name:                   name,
+		enabled:                config.Enabled,
+		debug:                  config.Debug,
+		securityLog:            config.SecurityLog,
+		methods:                methodsMap,
+		blockRegexes:           compiledBlockRegexes,
+		allowRegexes:           compiledAllowRegexes,
+		bodyRegexes:            compiledBodyRegexes,
+		blockUAPatterns:        compiledBlockUARegexes,
+		allowUAPatterns:        compiledAllowUARegexes,
+		botDefenseLevel:        config.BotDefenseLevel,
+		blockAIBots:            config.BlockAIBots,
+		aiBotProfile:           config.AIBotProfile,
+		honeypotTrapPaths:      config.HoneypotTrapPaths,
+		enableRobotsTxtHoneypot:    config.EnableRobotsTxtHoneypot,
+		robotsTxtHoneypotSecret:    config.RobotsTxtHoneypotSecret,
+		banTable:               banTable,
+		trapBanDuration:        banDuration,
+		verifySearchEngineBots:     config.VerifySearchEngineBots,
+		fcrdnsVerifier:             fcrdns,
+		detectBrowserImpersonation: config.DetectBrowserImpersonation,
+		blockScriptClients:         config.BlockScriptClients,
+		blockCloudHosts:            config.BlockCloudHosts,
+		ipFilter:                   ipFilter,
 		checkQuery:        config.CheckQuery,
 		checkHeaders:      cleanedHeaders,
 		checkBody:         config.CheckBody || len(compiledBodyRegexes) > 0,
@@ -528,6 +769,17 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		rw.enabled, rw.debug, rw.securityLog, len(rw.blockRegexes), len(rw.allowRegexes), len(config.AllowedIPs), rw.responseHandler.config.Mode)
 
 	return rw, nil
+}
+
+// SetFCrDNSLookupFuncs overrides the DNS lookup functions for testing purposes.
+func (rw *RouteWarden) SetFCrDNSLookupFuncs(
+	lookupAddr func(ctx context.Context, addr string) ([]string, error),
+	lookupIP func(ctx context.Context, host string) ([]net.IP, error),
+) {
+	if rw.fcrdnsVerifier != nil {
+		rw.fcrdnsVerifier.lookupAddr = lookupAddr
+		rw.fcrdnsVerifier.lookupIP = lookupIP
+	}
 }
 
 func (rw *RouteWarden) logDebug(format string, v ...interface{}) {
@@ -565,9 +817,11 @@ func (rw *RouteWarden) logSecurityEvent(req *http.Request, matchedTarget string,
 	}
 
 	verdict := "BLOCK"
-	if strings.EqualFold(mode, "tarpit") {
+	cleanMode := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(mode), "_", ""))
+	switch cleanMode {
+	case "tarpit", "markovtarpit":
 		verdict = "TARPIT"
-	} else if strings.EqualFold(mode, "challenge") {
+	case "captcha", "ratelimitchallenge", "challenge":
 		verdict = "CHALLENGE"
 	}
 
@@ -620,15 +874,183 @@ func (rw *RouteWarden) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	// Blocked ASN check
+	if rw.ipFilter != nil {
+		if isBlockedASN, asnNum := rw.ipFilter.IsBlockedASN(req); isBlockedASN {
+			clientIP := rw.extractClientIP(req)
+			rw.logDebug("client IP %s is in blocked ASN %d, dropping request", clientIP, asnNum)
+			rw.logSecurityEvent(req, fmt.Sprintf("AS%d", asnNum), fmt.Sprintf("AS%d", asnNum), "asn_blocked")
+			rw.responseHandler.ServeBlockedRequest(w, req)
+			return
+		}
+	}
+
+	clientIP := rw.extractClientIP(req)
+
+	// Active Ban Table Check
+	if rw.banTable != nil && rw.banTable.IsBanned(clientIP) {
+		rw.logDebug("client IP %s is actively banned, dropping request", clientIP)
+		rw.logSecurityEvent(req, clientIP, "ban_table", "ip_banned")
+		rw.responseHandler.ServeBlockedRequest(w, req)
+		return
+	}
+
+	// Check PoW solution cookie (__rw_pow) or header (X-RW-PoW)
+	powToken := extractPoWToken(req)
+	isPoWValid := false
+	if powToken != "" && rw.responseHandler != nil && rw.responseHandler.config != nil {
+		secret := rw.responseHandler.config.PoWSecret
+		if secret == "" {
+			secret = DefaultPoWSecret
+		}
+		timeout := rw.responseHandler.config.PoWTimeoutSeconds
+		if timeout <= 0 {
+			timeout = DefaultPoWTimeoutSeconds
+		}
+		isPoWValid, _ = VerifyPoWSolution(clientIP, secret, powToken, timeout, time.Now())
+	}
+
+	serveBlock := func(target, pattern, reason string) {
+		if isPoWValid {
+			rw.logDebug("client %s PoW verified, bypassing block %s (%s)", clientIP, pattern, reason)
+			rw.forwardRequest(w, req)
+			return
+		}
+		rw.logSecurityEvent(req, target, pattern, reason)
+		rw.responseHandler.ServeBlockedRequest(w, req)
+	}
+
+	// User-Agent & AI Bot Inspection
+	ua := req.UserAgent()
+	uaAllowed := false
+	for _, re := range rw.allowUAPatterns {
+		if re.MatchString(ua) {
+			uaAllowed = true
+			break
+		}
+	}
+
+	if !uaAllowed {
+		// Search engine bot impersonation verification (FCrDNS)
+		if rw.verifySearchEngineBots && rw.fcrdnsVerifier != nil {
+			if claimsBot, engine := DetectSearchEngineBot(ua); claimsBot {
+				if !rw.fcrdnsVerifier.Verify(req.Context(), clientIP, engine) {
+					rw.logDebug("client %s spoofed search engine %s (User-Agent: %q), failed FCrDNS", clientIP, engine, ua)
+					serveBlock(ua, string(engine)+"_spoofed", "search_engine_spoofed")
+					return
+				}
+				// Verified legitimate search engine spider; exempt from generic bot blocks
+				uaAllowed = true
+			}
+		}
+	}
+
+	if !uaAllowed {
+		uaBlocked := false
+		uaPattern := ""
+		uaReason := ""
+
+		for _, re := range rw.blockUAPatterns {
+			if re.MatchString(ua) {
+				uaBlocked = true
+				uaPattern = re.String()
+				uaReason = "user_agent_blocked"
+				break
+			}
+		}
+
+		if !uaBlocked && rw.blockAIBots {
+			if matched, botType := MatchAIBot(ua, rw.aiBotProfile); matched {
+				uaBlocked = true
+				uaPattern = botType
+				uaReason = "ai_bot_blocked"
+			}
+		}
+
+		if !uaBlocked && rw.detectBrowserImpersonation {
+			if isSpoofed, reason := DetectBrowserImpersonation(ua, req.Header); isSpoofed {
+				uaBlocked = true
+				uaPattern = reason
+				uaReason = "browser_spoofed"
+			}
+		}
+
+		if !uaBlocked && rw.blockScriptClients {
+			if isScript, clientType := DetectScriptClient(ua, req.Header); isScript {
+				uaBlocked = true
+				uaPattern = clientType
+				uaReason = "script_client_blocked"
+			}
+		}
+
+		if uaBlocked {
+			rw.logDebug("client %s User-Agent %q blocked by pattern %q (reason: %s)", clientIP, ua, uaPattern, uaReason)
+			serveBlock(ua, uaPattern, uaReason)
+			return
+		}
+	}
+
 	// Canonicalize and inspect paths with anti-evasion protections
 	candidatePaths := ExtractCandidatePaths(req.URL.RawPath, req.URL.Path, req.RequestURI)
 	rw.logDebug("inspecting request %s %s with %d candidate paths: %v", req.Method, req.URL.Path, len(candidatePaths), candidatePaths)
+
+	// Honeypot spider trap check (static and dynamic robots.txt traps)
+	var activeTraps []string
+	if len(rw.honeypotTrapPaths) > 0 {
+		activeTraps = append(activeTraps, rw.honeypotTrapPaths...)
+	}
+	if rw.enableRobotsTxtHoneypot {
+		_, dynPrefixes := GetActiveRobotsHoneypotTraps(rw.robotsTxtHoneypotSecret, time.Now())
+		activeTraps = append(activeTraps, dynPrefixes...)
+	}
+
+	if len(activeTraps) > 0 {
+		for _, candPath := range candidatePaths {
+			for _, trapPath := range activeTraps {
+				cleanTrap := strings.TrimSpace(trapPath)
+				if cleanTrap != "" && !strings.HasPrefix(cleanTrap, "/") {
+					cleanTrap = "/" + cleanTrap
+				}
+				baseTrap := strings.TrimRight(cleanTrap, "/")
+				if baseTrap == "" {
+					continue
+				}
+				prefixTrap := baseTrap + "/"
+				lowerCand := strings.ToLower(candPath)
+				lowerBase := strings.ToLower(baseTrap)
+				lowerPrefix := strings.ToLower(prefixTrap)
+				if lowerCand == lowerBase || strings.HasPrefix(lowerCand, lowerPrefix) {
+					if rw.banTable != nil && clientIP != "" {
+						rw.banTable.Ban(clientIP, rw.trapBanDuration)
+					}
+					rw.logDebug("client %s triggered honeypot spider trap %q (path: %q), banned for %v", clientIP, cleanTrap, candPath, rw.trapBanDuration)
+					rw.logSecurityEvent(req, candPath, cleanTrap, "honeypot_trap_triggered")
+					rw.responseHandler.ServeBlockedRequest(w, req)
+					return
+				}
+			}
+		}
+	}
 
 	// 1. Check AllowPatterns first (Allowlist override)
 	for _, p := range candidatePaths {
 		if re := rw.findMatchingAllow(p); re != nil {
 			rw.logDebug("path %q allowed by pattern %q", p, re.String())
-			rw.next.ServeHTTP(w, req)
+			rw.forwardRequest(w, req)
+			return
+		}
+	}
+
+	// Datacenter & Cloud Hosting IP Classifier
+	if !uaAllowed && rw.blockCloudHosts && rw.ipFilter != nil && rw.ipFilter.asn != nil {
+		if isCloud, cloudASN, provider := rw.ipFilter.asn.IsCloudHost(clientIP); isCloud {
+			reason := "cloud_host_blocked"
+			if reBrowserLike.MatchString(ua) {
+				reason = "datacenter_browser_impersonation"
+			}
+			matchedPattern := fmt.Sprintf("AS%d (%s)", cloudASN, provider)
+			rw.logDebug("client %s origin ASN %d (%s) blocked by cloud host classifier (reason: %s)", clientIP, cloudASN, provider, reason)
+			serveBlock(clientIP, matchedPattern, reason)
 			return
 		}
 	}
@@ -637,29 +1059,23 @@ func (rw *RouteWarden) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	for _, p := range candidatePaths {
 		if re := rw.findMatchingBlock(p); re != nil {
 			rw.logDebug("path %q blocked by pattern %q (mode: %s)", p, re.String(), rw.responseHandler.config.Mode)
-			rw.logSecurityEvent(req, p, re.String(), "path_blocked")
-			rw.responseHandler.ServeBlockedRequest(w, req)
+			serveBlock(p, re.String(), "path_blocked")
 			return
 		}
 	}
 
 	// 3. Optional: Check Query String if enabled
 	if rw.checkQuery && req.URL.RawQuery != "" {
-		unescapedQuery, err := url.QueryUnescape(req.URL.RawQuery)
-		if err != nil {
-			unescapedQuery = req.URL.RawQuery
-		}
+		unescapedQuery := lenientQueryUnescape(req.URL.RawQuery)
 
 		if re := rw.findMatchingBlock(unescapedQuery); re != nil {
 			rw.logDebug("unescaped query %q blocked by pattern %q", unescapedQuery, re.String())
-			rw.logSecurityEvent(req, unescapedQuery, re.String(), "query_blocked")
-			rw.responseHandler.ServeBlockedRequest(w, req)
+			serveBlock(unescapedQuery, re.String(), "query_blocked")
 			return
 		}
 		if re := rw.findMatchingBlock(req.URL.RawQuery); re != nil {
 			rw.logDebug("raw query %q blocked by pattern %q", req.URL.RawQuery, re.String())
-			rw.logSecurityEvent(req, req.URL.RawQuery, re.String(), "query_blocked")
-			rw.responseHandler.ServeBlockedRequest(w, req)
+			serveBlock(req.URL.RawQuery, re.String(), "query_blocked")
 			return
 		}
 
@@ -672,8 +1088,7 @@ func (rw *RouteWarden) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			for _, kc := range keyCandidates {
 				if re := rw.findMatchingBlock(kc); re != nil {
 					rw.logDebug("query param key %q blocked by pattern %q", key, re.String())
-					rw.logSecurityEvent(req, key, re.String(), "query_param_blocked")
-					rw.responseHandler.ServeBlockedRequest(w, req)
+					serveBlock(key, re.String(), "query_param_blocked")
 					return
 				}
 			}
@@ -683,46 +1098,49 @@ func (rw *RouteWarden) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				for _, vc := range valCandidates {
 					if re := rw.findMatchingBlock(vc); re != nil {
 						rw.logDebug("query param %q with value %q blocked by pattern %q", key, val, re.String())
-						rw.logSecurityEvent(req, val, re.String(), "query_param_blocked")
-						rw.responseHandler.ServeBlockedRequest(w, req)
+						serveBlock(val, re.String(), "query_param_blocked")
 						return
 					}
 				}
 			}
 		}
 
-		// Also split raw query string on '&' and ';' to catch keys/values even when malformed encodings cause ParseQuery to error
-		for _, pair := range strings.FieldsFunc(req.URL.RawQuery, func(r rune) bool { return r == '&' || r == ';' }) {
-			if k, v, ok := strings.Cut(pair, "="); ok {
-				kCandidates := append([]string{k}, ExtractCandidatePaths("", k, k)...)
-				kCandidates = kCandidates[:len(kCandidates):len(kCandidates)]
-				for _, kc := range kCandidates {
-					if re := rw.findMatchingBlock(kc); re != nil {
-						rw.logDebug("query param key %q blocked by pattern %q", k, re.String())
-						rw.logSecurityEvent(req, k, re.String(), "query_param_blocked")
-						rw.responseHandler.ServeBlockedRequest(w, req)
-						return
+		// Also split raw and unescaped query strings on '&' and ';' to catch keys/values even when
+		// malformed encodings, semicolons, or encoded delimiters (%26, %3b) cause ParseQuery to error
+		queriesToParse := []string{req.URL.RawQuery}
+		if unescapedQuery != req.URL.RawQuery {
+			queriesToParse = append(queriesToParse, unescapedQuery)
+		}
+		for _, qStr := range queriesToParse {
+			for _, pair := range strings.FieldsFunc(qStr, func(r rune) bool { return r == '&' || r == ';' }) {
+				if k, v, ok := strings.Cut(pair, "="); ok {
+					kCandidates := append([]string{k}, ExtractCandidatePaths("", k, k)...)
+					kCandidates = kCandidates[:len(kCandidates):len(kCandidates)]
+					for _, kc := range kCandidates {
+						if re := rw.findMatchingBlock(kc); re != nil {
+							rw.logDebug("query param key %q blocked by pattern %q", k, re.String())
+							serveBlock(k, re.String(), "query_param_blocked")
+							return
+						}
 					}
-				}
-				vCandidates := append([]string{v}, ExtractCandidatePaths("", v, v)...)
-				vCandidates = vCandidates[:len(vCandidates):len(vCandidates)]
-				for _, vc := range vCandidates {
-					if re := rw.findMatchingBlock(vc); re != nil {
-						rw.logDebug("query param val %q blocked by pattern %q", v, re.String())
-						rw.logSecurityEvent(req, v, re.String(), "query_param_blocked")
-						rw.responseHandler.ServeBlockedRequest(w, req)
-						return
+					vCandidates := append([]string{v}, ExtractCandidatePaths("", v, v)...)
+					vCandidates = vCandidates[:len(vCandidates):len(vCandidates)]
+					for _, vc := range vCandidates {
+						if re := rw.findMatchingBlock(vc); re != nil {
+							rw.logDebug("query param val %q blocked by pattern %q", v, re.String())
+							serveBlock(v, re.String(), "query_param_blocked")
+							return
+						}
 					}
-				}
-			} else if pair != "" {
-				pCandidates := append([]string{pair}, ExtractCandidatePaths("", pair, pair)...)
-				pCandidates = pCandidates[:len(pCandidates):len(pCandidates)]
-				for _, pc := range pCandidates {
-					if re := rw.findMatchingBlock(pc); re != nil {
-						rw.logDebug("query item %q blocked by pattern %q", pair, re.String())
-						rw.logSecurityEvent(req, pair, re.String(), "query_param_blocked")
-						rw.responseHandler.ServeBlockedRequest(w, req)
-						return
+				} else if pair != "" {
+					pCandidates := append([]string{pair}, ExtractCandidatePaths("", pair, pair)...)
+					pCandidates = pCandidates[:len(pCandidates):len(pCandidates)]
+					for _, pc := range pCandidates {
+						if re := rw.findMatchingBlock(pc); re != nil {
+							rw.logDebug("query item %q blocked by pattern %q", pair, re.String())
+							serveBlock(pair, re.String(), "query_param_blocked")
+							return
+						}
 					}
 				}
 			}
@@ -738,10 +1156,26 @@ func (rw *RouteWarden) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 					continue
 				}
 				headerVals := []string{rawHeaderVal}
+				if strings.HasPrefix(rawHeaderVal, "\"") && strings.HasSuffix(rawHeaderVal, "\"") && len(rawHeaderVal) >= 2 {
+					unquoted := strings.TrimSpace(rawHeaderVal[1 : len(rawHeaderVal)-1])
+					if unquoted != "" && unquoted != rawHeaderVal {
+						headerVals = append(headerVals, unquoted)
+					}
+				} else if strings.HasPrefix(rawHeaderVal, "'") && strings.HasSuffix(rawHeaderVal, "'") && len(rawHeaderVal) >= 2 {
+					unquoted := strings.TrimSpace(rawHeaderVal[1 : len(rawHeaderVal)-1])
+					if unquoted != "" && unquoted != rawHeaderVal {
+						headerVals = append(headerVals, unquoted)
+					}
+				}
 				if strings.Contains(rawHeaderVal, ",") {
 					for _, part := range strings.Split(rawHeaderVal, ",") {
 						part = strings.TrimSpace(part)
-						if part != "" && part != rawHeaderVal {
+						if strings.HasPrefix(part, "\"") && strings.HasSuffix(part, "\"") && len(part) >= 2 {
+							part = strings.TrimSpace(part[1 : len(part)-1])
+						} else if strings.HasPrefix(part, "'") && strings.HasSuffix(part, "'") && len(part) >= 2 {
+							part = strings.TrimSpace(part[1 : len(part)-1])
+						}
+						if part != "" {
 							headerVals = append(headerVals, part)
 						}
 					}
@@ -752,8 +1186,7 @@ func (rw *RouteWarden) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 					for _, hc := range headerCandidates {
 						if re := rw.findMatchingBlock(hc); re != nil {
 							rw.logDebug("header %q with value %q blocked by pattern %q", headerName, headerVal, re.String())
-							rw.logSecurityEvent(req, rawHeaderVal, re.String(), "header_blocked")
-							rw.responseHandler.ServeBlockedRequest(w, req)
+							serveBlock(rawHeaderVal, re.String(), "header_blocked")
 							return
 						}
 					}
@@ -770,20 +1203,70 @@ func (rw *RouteWarden) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		}
 
 		origBody := req.Body
-		bodyBytes, err := io.ReadAll(io.LimitReader(origBody, maxBytes))
-		if err == nil && len(bodyBytes) > 0 {
+		bodyBytes, _ := io.ReadAll(io.LimitReader(origBody, maxBytes))
+		if len(bodyBytes) > 0 {
 			req.Body = &bodyReadCloser{
 				Reader: io.MultiReader(bytes.NewReader(bodyBytes), origBody),
 				Closer: origBody,
 			}
 
 			bodyStr := string(bodyBytes)
-			unescapedBody, unerr := url.QueryUnescape(bodyStr)
-			if unerr != nil {
-				unescapedBody = bodyStr
-			}
+			unescapedBody := lenientQueryUnescape(bodyStr)
 
 			bodyCandidates := []string{bodyStr, unescapedBody}
+
+			// Form urlencoded parameters extraction (&, ;)
+			if parsedValues, err := url.ParseQuery(bodyStr); err == nil && len(parsedValues) > 0 {
+				for k, vs := range parsedValues {
+					bodyCandidates = append(bodyCandidates, k)
+					bodyCandidates = append(bodyCandidates, ExtractCandidatePaths("", k, k)...)
+					for _, v := range vs {
+						bodyCandidates = append(bodyCandidates, v)
+						bodyCandidates = append(bodyCandidates, ExtractCandidatePaths(v, v, v)...)
+					}
+				}
+			}
+			bodiesToParse := []string{bodyStr}
+			if unescapedBody != bodyStr {
+				bodiesToParse = append(bodiesToParse, unescapedBody)
+			}
+			for _, bStr := range bodiesToParse {
+				for _, pair := range strings.FieldsFunc(bStr, func(r rune) bool { return r == '&' || r == ';' }) {
+					if k, v, ok := strings.Cut(pair, "="); ok {
+						bodyCandidates = append(bodyCandidates, k, v)
+						bodyCandidates = append(bodyCandidates, ExtractCandidatePaths("", k, k)...)
+						bodyCandidates = append(bodyCandidates, ExtractCandidatePaths("", v, v)...)
+					}
+				}
+			}
+
+			// JSON payload string values extraction
+			trimmedBody := strings.TrimSpace(bodyStr)
+			if (strings.HasPrefix(trimmedBody, "{") && strings.HasSuffix(trimmedBody, "}")) ||
+				(strings.HasPrefix(trimmedBody, "[") && strings.HasSuffix(trimmedBody, "]")) {
+				var jsonVal any
+				if err := json.Unmarshal([]byte(trimmedBody), &jsonVal); err == nil {
+					var extractJSON func(v any)
+					extractJSON = func(v any) {
+						switch val := v.(type) {
+						case string:
+							bodyCandidates = append(bodyCandidates, val)
+							bodyCandidates = append(bodyCandidates, ExtractCandidatePaths("", val, val)...)
+						case []any:
+							for _, item := range val {
+								extractJSON(item)
+							}
+						case map[string]any:
+							for k, item := range val {
+								bodyCandidates = append(bodyCandidates, k)
+								bodyCandidates = append(bodyCandidates, ExtractCandidatePaths("", k, k)...)
+								extractJSON(item)
+							}
+						}
+					}
+					extractJSON(jsonVal)
+				}
+			}
 			patternsToCheck := rw.bodyRegexes
 			if len(patternsToCheck) == 0 {
 				patternsToCheck = rw.blockRegexes
@@ -793,8 +1276,7 @@ func (rw *RouteWarden) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				for _, re := range patternsToCheck {
 					if re.MatchString(bc) {
 						rw.logDebug("body payload blocked by pattern %q", re.String())
-						rw.logSecurityEvent(req, "[body payload]", re.String(), "body_blocked")
-						rw.responseHandler.ServeBlockedRequest(w, req)
+						serveBlock("[body payload]", re.String(), "body_blocked")
 						return
 					}
 				}
@@ -810,6 +1292,42 @@ func (rw *RouteWarden) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 
 	rw.logDebug("request %s %s passed inspection", req.Method, req.URL.Path)
+	rw.forwardRequest(w, req)
+}
+
+func (rw *RouteWarden) forwardRequest(w http.ResponseWriter, req *http.Request) {
+	if rw.enableRobotsTxtHoneypot && IsRobotsTxtPath(req.URL.Path) && (req.Method == http.MethodGet || req.Method == http.MethodHead) {
+		buf := &robotsResponseBuffer{
+			ResponseWriter: w,
+			statusCode:     http.StatusOK,
+			header:         make(http.Header),
+		}
+		rw.next.ServeHTTP(buf, req)
+
+		activeTrap, _ := GetActiveRobotsHoneypotTraps(rw.robotsTxtHoneypotSecret, time.Now())
+		var finalBody []byte
+		if buf.statusCode == http.StatusNotFound {
+			buf.statusCode = http.StatusOK
+			finalBody = InjectRobotsTxtTrap(nil, activeTrap)
+		} else if buf.statusCode >= 200 && buf.statusCode < 300 {
+			finalBody = InjectRobotsTxtTrap(buf.buf.Bytes(), activeTrap)
+		} else {
+			buf.flushOriginal()
+			return
+		}
+
+		for k, vv := range buf.header {
+			for _, v := range vv {
+				w.Header().Add(k, v)
+			}
+		}
+		w.Header().Del("Content-Length")
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(buf.statusCode)
+		w.Write(finalBody)
+		return
+	}
+
 	rw.next.ServeHTTP(w, req)
 }
 
@@ -843,4 +1361,108 @@ func (b *bodyReadCloser) Close() error {
 		return b.Closer.Close()
 	}
 	return nil
+}
+
+func (cfg *Config) applyBotDefense(level string) {
+	switch strings.ToLower(strings.TrimSpace(level)) {
+	case "light", "relaxed":
+		if !cfg.IsExplicit("blockAIBots", "block_ai_bots") {
+			cfg.BlockAIBots = true
+		}
+		if !cfg.IsExplicit("aiBotProfile", "ai_bot_profile") && cfg.AIBotProfile == "" {
+			cfg.AIBotProfile = "train_only"
+		}
+		if !cfg.IsExplicit("blockScriptClients", "block_script_clients") {
+			cfg.BlockScriptClients = true
+		}
+		if !cfg.IsExplicit("verifySearchEngineBots", "verify_search_engine_bots") {
+			cfg.VerifySearchEngineBots = true
+		}
+	case "standard", "moderate":
+		if !cfg.IsExplicit("blockAIBots", "block_ai_bots") {
+			cfg.BlockAIBots = true
+		}
+		if !cfg.IsExplicit("aiBotProfile", "ai_bot_profile") && cfg.AIBotProfile == "" {
+			cfg.AIBotProfile = "train_only"
+		}
+		if !cfg.IsExplicit("blockScriptClients", "block_script_clients") {
+			cfg.BlockScriptClients = true
+		}
+		if !cfg.IsExplicit("detectBrowserImpersonation", "detect_browser_impersonation") {
+			cfg.DetectBrowserImpersonation = true
+		}
+		if !cfg.IsExplicit("verifySearchEngineBots", "verify_search_engine_bots") {
+			cfg.VerifySearchEngineBots = true
+		}
+	case "strict":
+		if !cfg.IsExplicit("blockAIBots", "block_ai_bots") {
+			cfg.BlockAIBots = true
+		}
+		if !cfg.IsExplicit("aiBotProfile", "ai_bot_profile") && cfg.AIBotProfile == "" {
+			cfg.AIBotProfile = "all"
+		}
+		if !cfg.IsExplicit("blockScriptClients", "block_script_clients") {
+			cfg.BlockScriptClients = true
+		}
+		if !cfg.IsExplicit("detectBrowserImpersonation", "detect_browser_impersonation") {
+			cfg.DetectBrowserImpersonation = true
+		}
+		if !cfg.IsExplicit("verifySearchEngineBots", "verify_search_engine_bots") {
+			cfg.VerifySearchEngineBots = true
+		}
+	case "aggressive", "paranoia":
+		if !cfg.IsExplicit("blockAIBots", "block_ai_bots") {
+			cfg.BlockAIBots = true
+		}
+		if !cfg.IsExplicit("aiBotProfile", "ai_bot_profile") && cfg.AIBotProfile == "" {
+			cfg.AIBotProfile = "aggressive"
+		}
+		if !cfg.IsExplicit("blockScriptClients", "block_script_clients") {
+			cfg.BlockScriptClients = true
+		}
+		if !cfg.IsExplicit("detectBrowserImpersonation", "detect_browser_impersonation") {
+			cfg.DetectBrowserImpersonation = true
+		}
+		if !cfg.IsExplicit("verifySearchEngineBots", "verify_search_engine_bots") {
+			cfg.VerifySearchEngineBots = true
+		}
+	}
+}
+
+// applyBotDefenseLevel applies preset security configurations for the given level.
+// Explicitly configured settings take precedence over presets.
+func applyBotDefenseLevel(level string, blockAIBots *bool, aiBotProfile *string, detectBrowser *bool, blockScripts *bool, verifySearch *bool) {
+	switch strings.ToLower(strings.TrimSpace(level)) {
+	case "light", "relaxed":
+		*blockAIBots = true
+		if *aiBotProfile == "" {
+			*aiBotProfile = "train_only"
+		}
+		*blockScripts = true
+		*verifySearch = true
+	case "standard", "moderate":
+		*blockAIBots = true
+		if *aiBotProfile == "" {
+			*aiBotProfile = "train_only"
+		}
+		*blockScripts = true
+		*detectBrowser = true
+		*verifySearch = true
+	case "strict":
+		*blockAIBots = true
+		if *aiBotProfile == "" {
+			*aiBotProfile = "all"
+		}
+		*blockScripts = true
+		*detectBrowser = true
+		*verifySearch = true
+	case "aggressive", "paranoia":
+		*blockAIBots = true
+		if *aiBotProfile == "" {
+			*aiBotProfile = "aggressive"
+		}
+		*blockScripts = true
+		*detectBrowser = true
+		*verifySearch = true
+	}
 }

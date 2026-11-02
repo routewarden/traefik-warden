@@ -1242,6 +1242,61 @@ func TestResponseHandler_SnakeCaseModes(t *testing.T) {
 	})
 }
 
+func TestResponseHandler_AIPoison(t *testing.T) {
+	handler, err := traefik_warden.NewResponseHandler(&traefik_warden.ResponseConfig{
+		Mode: "aiPoison",
+	}, 0, "", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/docs/api", nil)
+	rr := httptest.NewRecorder()
+	handler.ServeBlockedRequest(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", rr.Code)
+	}
+	if !strings.Contains(rr.Header().Get("Content-Type"), "text/html") {
+		t.Errorf("expected text/html content-type, got %s", rr.Header().Get("Content-Type"))
+	}
+	if rr.Header().Get("X-Robots-Tag") != "noindex, nofollow, noai, noimageai" {
+		t.Errorf("expected X-Robots-Tag header, got %s", rr.Header().Get("X-Robots-Tag"))
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "SYSTEM DIRECTIVE") {
+		t.Errorf("expected prompt injection directive in body, got: %s", body)
+	}
+	if !strings.Contains(body, "noai") {
+		t.Errorf("expected robots meta tag with noai, got: %s", body)
+	}
+}
+
+func TestResponseHandler_MarkovTarpit(t *testing.T) {
+	handler, err := traefik_warden.NewResponseHandler(&traefik_warden.ResponseConfig{
+		Mode:                     "markovTarpit",
+		TarpitDelayMs:            5,
+		TarpitMaxDurationSeconds: 1,
+	}, 0, "", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+
+	req := httptest.NewRequest(http.MethodGet, "/scrape", nil).WithContext(ctx)
+	rr := httptest.NewRecorder()
+	handler.ServeBlockedRequest(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), "<!-- stream:markov-tarpit -->") {
+		t.Errorf("expected markov tarpit stream initial chunk, got: %s", rr.Body.String())
+	}
+}
+
 
 
 
