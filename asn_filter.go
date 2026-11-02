@@ -14,6 +14,7 @@ import (
 type ASNFilter struct {
 	roots   [2]*asnNode
 	allowed map[uint32]bool
+	blocked map[uint32]bool
 }
 type asnNode struct {
 	children [2]*asnNode
@@ -41,10 +42,19 @@ func parseASN(value string) (uint32, error) {
 }
 
 // NewASNFilter validates and loads the database once, outside the request path.
-// With no allowed ASNs the feature is disabled and no database is read.
+// With no allowed or blocked ASNs the feature is disabled and no database is read.
 func NewASNFilter(allowed []string, path string) (*ASNFilter, error) {
-	f := &ASNFilter{allowed: make(map[uint32]bool)}
-	if len(allowed) == 0 {
+	return NewASNFilterEx(allowed, nil, path)
+}
+
+// NewASNFilterEx supports both allowed and blocked ASN lists, as well as cloud host classification.
+func NewASNFilterEx(allowed []string, blocked []string, path string, blockCloudHosts ...bool) (*ASNFilter, error) {
+	shouldBlockCloud := len(blockCloudHosts) > 0 && blockCloudHosts[0]
+	f := &ASNFilter{
+		allowed: make(map[uint32]bool),
+		blocked: make(map[uint32]bool),
+	}
+	if len(allowed) == 0 && len(blocked) == 0 && !shouldBlockCloud {
 		return f, nil
 	}
 	for _, value := range allowed {
@@ -54,8 +64,15 @@ func NewASNFilter(allowed []string, path string) (*ASNFilter, error) {
 		}
 		f.allowed[n] = true
 	}
+	for _, value := range blocked {
+		n, err := parseASN(value)
+		if err != nil {
+			return nil, err
+		}
+		f.blocked[n] = true
+	}
 	if strings.TrimSpace(path) == "" {
-		return nil, fmt.Errorf("asnDB/asn_db is required with allowed ASNs")
+		return nil, fmt.Errorf("asnDB/asn_db is required with ASN allow/block lists")
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -91,6 +108,11 @@ func NewASNFilter(allowed []string, path string) (*ASNFilter, error) {
 		}
 	}
 	for n := range f.allowed {
+		if !found[n] {
+			return nil, fmt.Errorf("ASN %d has no prefixes in database", n)
+		}
+	}
+	for n := range f.blocked {
 		if !found[n] {
 			return nil, fmt.Errorf("ASN %d has no prefixes in database", n)
 		}
@@ -162,5 +184,58 @@ func (f *ASNFilter) Lookup(address string) uint32 {
 
 // IsAllowed never grants a bypass to unknown or malformed addresses.
 func (f *ASNFilter) IsAllowed(address string) bool {
-	return f != nil && f.allowed[f.Lookup(address)]
+	return f != nil && len(f.allowed) > 0 && f.allowed[f.Lookup(address)]
+}
+
+// IsBlocked returns true and the origin ASN number if the address belongs to a blocked ASN.
+func (f *ASNFilter) IsBlocked(address string) (bool, uint32) {
+	if f == nil || len(f.blocked) == 0 {
+		return false, 0
+	}
+	n := f.Lookup(address)
+	if n != 0 && f.blocked[n] {
+		return true, n
+	}
+	return false, 0
+}
+
+// DefaultCloudASNs defines major cloud hosting and datacenter Autonomous System Numbers.
+var DefaultCloudASNs = map[uint32]string{
+	16509:  "AWS",
+	14618:  "AWS",
+	15169:  "Google Cloud",
+	396982: "Google Cloud",
+	8075:   "Microsoft Azure",
+	8074:   "Microsoft Azure",
+	24940:  "Hetzner",
+	14061:  "DigitalOcean",
+	16276:  "OVH",
+	63949:  "Linode/Akamai",
+	138699: "ByteDance",
+	137718: "ByteDance",
+	31898:  "Oracle Cloud",
+	132203: "Tencent Cloud",
+	45102:  "Alibaba Cloud",
+}
+
+// IsCloudASN checks if an ASN number matches known cloud or datacenter providers.
+func IsCloudASN(asn uint32) (bool, string) {
+	name, ok := DefaultCloudASNs[asn]
+	return ok, name
+}
+
+// IsCloudHost returns true, the ASN number, and the provider name if the address
+// belongs to a known cloud hosting / datacenter ASN.
+func (f *ASNFilter) IsCloudHost(address string) (bool, uint32, string) {
+	if f == nil {
+		return false, 0, ""
+	}
+	n := f.Lookup(address)
+	if n == 0 {
+		return false, 0, ""
+	}
+	if name, ok := DefaultCloudASNs[n]; ok {
+		return true, n, name
+	}
+	return false, 0, ""
 }

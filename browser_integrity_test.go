@@ -1,0 +1,229 @@
+package traefik_warden
+
+import (
+	"net/http"
+	"testing"
+)
+
+func TestDetectBrowserImpersonation(t *testing.T) {
+	chromeUA := "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+
+	// 1. Legitimate browser with full companion headers
+	validHeaders := http.Header{}
+	validHeaders.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+	validHeaders.Set("Accept-Language", "en-US,en;q=0.9")
+	validHeaders.Set("Accept-Encoding", "gzip, deflate, br")
+	validHeaders.Set("Sec-CH-UA", `"Chromium";v="128", "Not?A_Brand";v="24", "Google Chrome";v="128"`)
+	validHeaders.Set("Sec-CH-UA-Mobile", "?0")
+	validHeaders.Set("Sec-CH-UA-Platform", `"Windows"`)
+	validHeaders.Set("Sec-Fetch-Site", "none")
+	validHeaders.Set("Sec-Fetch-Mode", "navigate")
+	validHeaders.Set("Sec-Fetch-Dest", "document")
+
+	isSpoofed, reason := DetectBrowserImpersonation(chromeUA, validHeaders)
+	if isSpoofed {
+		t.Fatalf("expected valid Chrome to not be flagged as spoofed, got reason=%s", reason)
+	}
+
+	// 2. Missing Accept-Language
+	missingLangHeaders := validHeaders.Clone()
+	missingLangHeaders.Del("Accept-Language")
+	isSpoofed, reason = DetectBrowserImpersonation(chromeUA, missingLangHeaders)
+	if !isSpoofed || reason != "missing_accept_language" {
+		t.Errorf("expected missing_accept_language, got isSpoofed=%v, reason=%s", isSpoofed, reason)
+	}
+
+	// 4. Missing Accept-Encoding
+	missingEncHeaders := validHeaders.Clone()
+	missingEncHeaders.Del("Accept-Encoding")
+	isSpoofed, reason = DetectBrowserImpersonation(chromeUA, missingEncHeaders)
+	if !isSpoofed || reason != "missing_accept_encoding" {
+		t.Errorf("expected missing_accept_encoding, got isSpoofed=%v, reason=%s", isSpoofed, reason)
+	}
+
+	// 5. Missing Sec-CH-UA on modern Chrome 128
+	missingSecCHUA := validHeaders.Clone()
+	missingSecCHUA.Del("Sec-CH-UA")
+	isSpoofed, reason = DetectBrowserImpersonation(chromeUA, missingSecCHUA)
+	if !isSpoofed || reason != "missing_sec_ch_ua" {
+		t.Errorf("expected missing_sec_ch_ua, got isSpoofed=%v, reason=%s", isSpoofed, reason)
+	}
+
+	// 6. Mobile mismatch: Desktop Windows UA with Sec-CH-UA-Mobile: ?1
+	mobileMismatch := validHeaders.Clone()
+	mobileMismatch.Set("Sec-CH-UA-Mobile", "?1")
+	isSpoofed, reason = DetectBrowserImpersonation(chromeUA, mobileMismatch)
+	if !isSpoofed || reason != "sec_ch_ua_mobile_mismatch" {
+		t.Errorf("expected sec_ch_ua_mobile_mismatch, got isSpoofed=%v, reason=%s", isSpoofed, reason)
+	}
+
+	// 7. Platform mismatch: Windows in UA, but Linux in Sec-CH-UA-Platform
+	mismatchHeaders := validHeaders.Clone()
+	mismatchHeaders.Set("Sec-CH-UA-Platform", `"Linux"`)
+	isSpoofed, reason = DetectBrowserImpersonation(chromeUA, mismatchHeaders)
+	if !isSpoofed || reason != "sec_ch_ua_platform_mismatch" {
+		t.Errorf("expected sec_ch_ua_platform_mismatch, got isSpoofed=%v, reason=%s", isSpoofed, reason)
+	}
+
+	// 8. Chrome 128 missing Sec-Fetch-* headers
+	noFetchHeaders := validHeaders.Clone()
+	noFetchHeaders.Del("Sec-Fetch-Site")
+	noFetchHeaders.Del("Sec-Fetch-Mode")
+	noFetchHeaders.Del("Sec-Fetch-Dest")
+	isSpoofed, reason = DetectBrowserImpersonation(chromeUA, noFetchHeaders)
+	if !isSpoofed || reason != "missing_sec_fetch" {
+		t.Errorf("expected missing_sec_fetch, got isSpoofed=%v, reason=%s", isSpoofed, reason)
+	}
+
+	// 9. Search engine bot (Googlebot) claiming Mozilla/5.0 should not be rejected here
+	googleUA := "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)"
+	isSpoofed, _ = DetectBrowserImpersonation(googleUA, http.Header{})
+	if isSpoofed {
+		t.Errorf("expected Googlebot to be exempt from browser impersonation check")
+	}
+
+	// 10. Non-browser User-Agent (e.g. mobile API client)
+	apiUA := "MyCustomApp/1.0"
+	isSpoofed, _ = DetectBrowserImpersonation(apiUA, http.Header{})
+	if isSpoofed {
+		t.Errorf("expected custom API app to not be treated as browser-like")
+	}
+
+	// 11. Missing GREASE brand in modern Chromium Sec-CH-UA
+	noGreaseHeaders := validHeaders.Clone()
+	noGreaseHeaders.Set("Sec-CH-UA", `"Chromium";v="128", "Google Chrome";v="128"`)
+	isSpoofed, reason = DetectBrowserImpersonation(chromeUA, noGreaseHeaders)
+	if !isSpoofed || reason != "missing_grease_brand" {
+		t.Errorf("expected missing_grease_brand, got isSpoofed=%v, reason=%s", isSpoofed, reason)
+	}
+}
+
+func TestDetectBrowserHeaderOrder(t *testing.T) {
+	chromeUA := "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+
+	// Canonical Chromium order: Sec-CH-UA comes before User-Agent and Accept
+	goodOrder := []string{"Host", "Connection", "Sec-CH-UA", "Sec-CH-UA-Mobile", "Sec-CH-UA-Platform", "User-Agent", "Accept"}
+	anomaly, reason := DetectBrowserHeaderOrder(goodOrder, chromeUA)
+	if anomaly {
+		t.Fatalf("expected valid header order to pass, got reason=%s", reason)
+	}
+
+	// Python/curl-style anomaly: User-Agent precedes Sec-CH-UA
+	badOrderUA := []string{"Host", "User-Agent", "Sec-CH-UA", "Accept"}
+	anomaly, reason = DetectBrowserHeaderOrder(badOrderUA, chromeUA)
+	if !anomaly || reason != "header_order_anomaly" {
+		t.Fatalf("expected header_order_anomaly for User-Agent before Sec-CH-UA, got anomaly=%v, reason=%s", anomaly, reason)
+	}
+
+	// Node/axios anomaly: Accept precedes Sec-CH-UA
+	badOrderAccept := []string{"Host", "Accept", "Sec-CH-UA", "User-Agent"}
+	anomaly, reason = DetectBrowserHeaderOrder(badOrderAccept, chromeUA)
+	if !anomaly || reason != "header_order_anomaly" {
+		t.Fatalf("expected header_order_anomaly for Accept before Sec-CH-UA, got anomaly=%v, reason=%s", anomaly, reason)
+	}
+}
+
+func TestDetectScriptClient(t *testing.T) {
+	tests := []struct {
+		name       string
+		ua         string
+		headers    http.Header
+		wantDetect bool
+	}{
+		{
+			name:       "python-requests",
+			ua:         "python-requests/2.31.0",
+			headers:    http.Header{},
+			wantDetect: true,
+		},
+		{
+			name:       "aiohttp",
+			ua:         "Python/3.10 aiohttp/3.8.5",
+			headers:    http.Header{},
+			wantDetect: true,
+		},
+		{
+			name:       "axios",
+			ua:         "axios/1.6.0",
+			headers:    http.Header{},
+			wantDetect: true,
+		},
+		{
+			name:       "go-http-client",
+			ua:         "Go-http-client/2.0",
+			headers:    http.Header{},
+			wantDetect: true,
+		},
+		{
+			name:       "curl",
+			ua:         "curl/8.1.2",
+			headers:    http.Header{},
+			wantDetect: true,
+		},
+		{
+			name:       "guzzle",
+			ua:         "GuzzleHttp/7",
+			headers:    http.Header{},
+			wantDetect: true,
+		},
+		{
+			name:       "reqwest",
+			ua:         "reqwest/0.11.22",
+			headers:    http.Header{},
+			wantDetect: true,
+		},
+		{
+			name: "playwright header",
+			ua:   "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+			headers: http.Header{
+				"X-Playwright": []string{"true"},
+			},
+			wantDetect: true,
+		},
+		{
+			name: "sec-webdriver header",
+			ua:   "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+			headers: http.Header{
+				"Sec-Webdriver": []string{"?1"},
+			},
+			wantDetect: true,
+		},
+		{
+			name:       "legitimate browser",
+			ua:         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+			headers:    http.Header{},
+			wantDetect: false,
+		},
+		{
+			name: "empty user-agent with x-playwright header",
+			ua:   "",
+			headers: http.Header{
+				"X-Playwright": []string{"true"},
+			},
+			wantDetect: true,
+		},
+		{
+			name: "empty user-agent with sec-webdriver header",
+			ua:   "",
+			headers: http.Header{
+				"Sec-Webdriver": []string{"?1"},
+			},
+			wantDetect: true,
+		},
+		{
+			name:       "empty user-agent without automation headers",
+			ua:         "",
+			headers:    http.Header{},
+			wantDetect: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			detected, _ := DetectScriptClient(tc.ua, tc.headers)
+			if detected != tc.wantDetect {
+				t.Errorf("tc %s: got detected=%v, want %v", tc.name, detected, tc.wantDetect)
+			}
+		})
+	}
+}
