@@ -106,6 +106,8 @@ type Config struct {
 	BlockUserAgents            []string `json:"blockUserAgents,omitempty"`
 	AllowUserAgents            []string `json:"allowUserAgents,omitempty"`
 	HoneypotTrapPaths          []string `json:"honeypotTrapPaths,omitempty"`
+	EnableRobotsTxtHoneypot    bool     `json:"enableRobotsTxtHoneypot,omitempty"`
+	RobotsTxtHoneypotSecret    string   `json:"robotsTxtHoneypotSecret,omitempty"`
 	TrapBanDuration            string   `json:"trapBanDuration,omitempty"`
 	VerifySearchEngineBots     bool     `json:"verifySearchEngineBots,omitempty"`
 	DetectBrowserImpersonation bool     `json:"detectBrowserImpersonation,omitempty"`

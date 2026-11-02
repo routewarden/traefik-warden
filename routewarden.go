@@ -31,9 +31,11 @@ type RouteWarden struct {
 	botDefenseLevel   string
 	blockAIBots       bool
 	aiBotProfile      string
-	honeypotTrapPaths      []string
-	banTable               *BanTable
-	trapBanDuration        time.Duration
+	honeypotTrapPaths          []string
+	enableRobotsTxtHoneypot    bool
+	robotsTxtHoneypotSecret    string
+	banTable                   *BanTable
+	trapBanDuration            time.Duration
 	verifySearchEngineBots     bool
 	fcrdnsVerifier             *FCrDNSVerifier
 	detectBrowserImpersonation bool
@@ -112,6 +114,10 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 			AllowUserAgentsSnake            []string              `json:"allow_user_agents"`
 			HoneypotTrapPaths               []string              `json:"honeypotTrapPaths"`
 			HoneypotTrapPathsSnake          []string              `json:"honeypot_trap_paths"`
+			EnableRobotsTxtHoneypot         *bool                 `json:"enableRobotsTxtHoneypot"`
+			EnableRobotsTxtHoneypotSnake    *bool                 `json:"enable_robots_txt_honeypot"`
+			RobotsTxtHoneypotSecret         *string               `json:"robotsTxtHoneypotSecret"`
+			RobotsTxtHoneypotSecretSnake    *string               `json:"robots_txt_honeypot_secret"`
 			TrapBanDuration                 *string               `json:"trapBanDuration"`
 			TrapBanDurationSnake            *string               `json:"trap_ban_duration"`
 			VerifySearchEngineBots          *bool                 `json:"verifySearchEngineBots"`
@@ -235,6 +241,20 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 			fileCfg.HoneypotTrapPaths = scf.HoneypotTrapPaths
 		} else if len(scf.HoneypotTrapPathsSnake) > 0 {
 			fileCfg.HoneypotTrapPaths = scf.HoneypotTrapPathsSnake
+		}
+		if scf.EnableRobotsTxtHoneypot != nil {
+			fileCfg.EnableRobotsTxtHoneypot = *scf.EnableRobotsTxtHoneypot
+			fileCfg.MarkExplicit("enableRobotsTxtHoneypot")
+		} else if scf.EnableRobotsTxtHoneypotSnake != nil {
+			fileCfg.EnableRobotsTxtHoneypot = *scf.EnableRobotsTxtHoneypotSnake
+			fileCfg.MarkExplicit("enableRobotsTxtHoneypot")
+		}
+		if scf.RobotsTxtHoneypotSecret != nil {
+			fileCfg.RobotsTxtHoneypotSecret = *scf.RobotsTxtHoneypotSecret
+			fileCfg.MarkExplicit("robotsTxtHoneypotSecret")
+		} else if scf.RobotsTxtHoneypotSecretSnake != nil {
+			fileCfg.RobotsTxtHoneypotSecret = *scf.RobotsTxtHoneypotSecretSnake
+			fileCfg.MarkExplicit("robotsTxtHoneypotSecret")
 		}
 		if scf.TrapBanDuration != nil {
 			fileCfg.TrapBanDuration = *scf.TrapBanDuration
@@ -428,6 +448,12 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		}
 		if len(config.HoneypotTrapPaths) > 0 {
 			fileCfg.HoneypotTrapPaths = config.HoneypotTrapPaths
+		}
+		if config.IsExplicit("enableRobotsTxtHoneypot", "enable_robots_txt_honeypot") || config.EnableRobotsTxtHoneypot {
+			fileCfg.EnableRobotsTxtHoneypot = config.EnableRobotsTxtHoneypot
+		}
+		if config.IsExplicit("robotsTxtHoneypotSecret", "robots_txt_honeypot_secret") || config.RobotsTxtHoneypotSecret != "" {
+			fileCfg.RobotsTxtHoneypotSecret = config.RobotsTxtHoneypotSecret
 		}
 		if config.TrapBanDuration != "" {
 			fileCfg.TrapBanDuration = config.TrapBanDuration
@@ -684,7 +710,7 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 
 	banDuration := ParseBanDuration(config.TrapBanDuration)
 	var banTable *BanTable
-	if len(config.HoneypotTrapPaths) > 0 {
+	if len(config.HoneypotTrapPaths) > 0 || config.EnableRobotsTxtHoneypot {
 		banTable = NewBanTable(10000)
 	}
 
@@ -709,6 +735,8 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		blockAIBots:            config.BlockAIBots,
 		aiBotProfile:           config.AIBotProfile,
 		honeypotTrapPaths:      config.HoneypotTrapPaths,
+		enableRobotsTxtHoneypot:    config.EnableRobotsTxtHoneypot,
+		robotsTxtHoneypotSecret:    config.RobotsTxtHoneypotSecret,
 		banTable:               banTable,
 		trapBanDuration:        banDuration,
 		verifySearchEngineBots:     config.VerifySearchEngineBots,
@@ -929,10 +957,19 @@ func (rw *RouteWarden) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	candidatePaths := ExtractCandidatePaths(req.URL.RawPath, req.URL.Path, req.RequestURI)
 	rw.logDebug("inspecting request %s %s with %d candidate paths: %v", req.Method, req.URL.Path, len(candidatePaths), candidatePaths)
 
-	// Honeypot spider trap check
+	// Honeypot spider trap check (static and dynamic robots.txt traps)
+	var activeTraps []string
 	if len(rw.honeypotTrapPaths) > 0 {
+		activeTraps = append(activeTraps, rw.honeypotTrapPaths...)
+	}
+	if rw.enableRobotsTxtHoneypot {
+		_, dynPrefixes := GetActiveRobotsHoneypotTraps(rw.robotsTxtHoneypotSecret, time.Now())
+		activeTraps = append(activeTraps, dynPrefixes...)
+	}
+
+	if len(activeTraps) > 0 {
 		for _, candPath := range candidatePaths {
-			for _, trapPath := range rw.honeypotTrapPaths {
+			for _, trapPath := range activeTraps {
 				cleanTrap := strings.TrimSpace(trapPath)
 				if cleanTrap != "" && !strings.HasPrefix(cleanTrap, "/") {
 					cleanTrap = "/" + cleanTrap
@@ -962,7 +999,7 @@ func (rw *RouteWarden) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	for _, p := range candidatePaths {
 		if re := rw.findMatchingAllow(p); re != nil {
 			rw.logDebug("path %q allowed by pattern %q", p, re.String())
-			rw.next.ServeHTTP(w, req)
+			rw.forwardRequest(w, req)
 			return
 		}
 	}
@@ -1214,6 +1251,42 @@ func (rw *RouteWarden) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 
 	rw.logDebug("request %s %s passed inspection", req.Method, req.URL.Path)
+	rw.forwardRequest(w, req)
+}
+
+func (rw *RouteWarden) forwardRequest(w http.ResponseWriter, req *http.Request) {
+	if rw.enableRobotsTxtHoneypot && IsRobotsTxtPath(req.URL.Path) && (req.Method == http.MethodGet || req.Method == http.MethodHead) {
+		buf := &robotsResponseBuffer{
+			ResponseWriter: w,
+			statusCode:     http.StatusOK,
+			header:         make(http.Header),
+		}
+		rw.next.ServeHTTP(buf, req)
+
+		activeTrap, _ := GetActiveRobotsHoneypotTraps(rw.robotsTxtHoneypotSecret, time.Now())
+		var finalBody []byte
+		if buf.statusCode == http.StatusNotFound {
+			buf.statusCode = http.StatusOK
+			finalBody = InjectRobotsTxtTrap(nil, activeTrap)
+		} else if buf.statusCode >= 200 && buf.statusCode < 300 {
+			finalBody = InjectRobotsTxtTrap(buf.buf.Bytes(), activeTrap)
+		} else {
+			buf.flushOriginal()
+			return
+		}
+
+		for k, vv := range buf.header {
+			for _, v := range vv {
+				w.Header().Add(k, v)
+			}
+		}
+		w.Header().Del("Content-Length")
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(buf.statusCode)
+		w.Write(finalBody)
+		return
+	}
+
 	rw.next.ServeHTTP(w, req)
 }
 
