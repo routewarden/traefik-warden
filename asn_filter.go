@@ -47,13 +47,14 @@ func NewASNFilter(allowed []string, path string) (*ASNFilter, error) {
 	return NewASNFilterEx(allowed, nil, path)
 }
 
-// NewASNFilterEx supports both allowed and blocked ASN lists.
-func NewASNFilterEx(allowed []string, blocked []string, path string) (*ASNFilter, error) {
+// NewASNFilterEx supports both allowed and blocked ASN lists, as well as cloud host classification.
+func NewASNFilterEx(allowed []string, blocked []string, path string, blockCloudHosts ...bool) (*ASNFilter, error) {
+	shouldBlockCloud := len(blockCloudHosts) > 0 && blockCloudHosts[0]
 	f := &ASNFilter{
 		allowed: make(map[uint32]bool),
 		blocked: make(map[uint32]bool),
 	}
-	if len(allowed) == 0 && len(blocked) == 0 {
+	if len(allowed) == 0 && len(blocked) == 0 && !shouldBlockCloud {
 		return f, nil
 	}
 	for _, value := range allowed {
@@ -196,4 +197,45 @@ func (f *ASNFilter) IsBlocked(address string) (bool, uint32) {
 		return true, n
 	}
 	return false, 0
+}
+
+// DefaultCloudASNs defines major cloud hosting and datacenter Autonomous System Numbers.
+var DefaultCloudASNs = map[uint32]string{
+	16509:  "AWS",
+	14618:  "AWS",
+	15169:  "Google Cloud",
+	396982: "Google Cloud",
+	8075:   "Microsoft Azure",
+	8074:   "Microsoft Azure",
+	24940:  "Hetzner",
+	14061:  "DigitalOcean",
+	16276:  "OVH",
+	63949:  "Linode/Akamai",
+	138699: "ByteDance",
+	137718: "ByteDance",
+	31898:  "Oracle Cloud",
+	132203: "Tencent Cloud",
+	45102:  "Alibaba Cloud",
+}
+
+// IsCloudASN checks if an ASN number matches known cloud or datacenter providers.
+func IsCloudASN(asn uint32) (bool, string) {
+	name, ok := DefaultCloudASNs[asn]
+	return ok, name
+}
+
+// IsCloudHost returns true, the ASN number, and the provider name if the address
+// belongs to a known cloud hosting / datacenter ASN.
+func (f *ASNFilter) IsCloudHost(address string) (bool, uint32, string) {
+	if f == nil {
+		return false, 0, ""
+	}
+	n := f.Lookup(address)
+	if n == 0 {
+		return false, 0, ""
+	}
+	if name, ok := DefaultCloudASNs[n]; ok {
+		return true, n, name
+	}
+	return false, 0, ""
 }

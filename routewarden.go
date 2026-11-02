@@ -40,6 +40,7 @@ type RouteWarden struct {
 	fcrdnsVerifier             *FCrDNSVerifier
 	detectBrowserImpersonation bool
 	blockScriptClients         bool
+	blockCloudHosts            bool
 	ipFilter                   *IPFilter
 	checkQuery        bool
 	checkHeaders      []string
@@ -126,6 +127,8 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 			DetectBrowserImpersonationSnake *bool                 `json:"detect_browser_impersonation"`
 			BlockScriptClients              *bool                 `json:"blockScriptClients"`
 			BlockScriptClientsSnake         *bool                 `json:"block_script_clients"`
+			BlockCloudHosts                 *bool                 `json:"blockCloudHosts"`
+			BlockCloudHostsSnake            *bool                 `json:"block_cloud_hosts"`
 			AllowedIPs                      []string              `json:"allowedIps"`
 			AllowedIPsSnake                 []string              `json:"allowed_ips"`
 			TrustedProxies                  []string              `json:"trustedProxies"`
@@ -281,6 +284,13 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		} else if scf.BlockScriptClientsSnake != nil {
 			fileCfg.BlockScriptClients = *scf.BlockScriptClientsSnake
 			fileCfg.MarkExplicit("blockScriptClients")
+		}
+		if scf.BlockCloudHosts != nil {
+			fileCfg.BlockCloudHosts = *scf.BlockCloudHosts
+			fileCfg.MarkExplicit("blockCloudHosts")
+		} else if scf.BlockCloudHostsSnake != nil {
+			fileCfg.BlockCloudHosts = *scf.BlockCloudHostsSnake
+			fileCfg.MarkExplicit("blockCloudHosts")
 		}
 		if len(scf.AllowedIPs) > 0 {
 			fileCfg.AllowedIPs = scf.AllowedIPs
@@ -467,6 +477,9 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		if config.IsExplicit("blockScriptClients", "block_script_clients") || config.BlockScriptClients {
 			fileCfg.BlockScriptClients = config.BlockScriptClients
 		}
+		if config.IsExplicit("blockCloudHosts", "block_cloud_hosts") || config.BlockCloudHosts {
+			fileCfg.BlockCloudHosts = config.BlockCloudHosts
+		}
 		if len(config.AllowedIPs) > 0 {
 			fileCfg.AllowedIPs = config.AllowedIPs
 		}
@@ -640,7 +653,7 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		return nil, fmt.Errorf("routewarden [%s]: %w", name, err)
 	}
 
-	ipFilter.asn, err = NewASNFilterEx(config.AllowedASNs, config.BlockedASNs, config.ASNDB)
+	ipFilter.asn, err = NewASNFilterEx(config.AllowedASNs, config.BlockedASNs, config.ASNDB, config.BlockCloudHosts)
 	if err != nil {
 		return nil, fmt.Errorf("routewarden [%s]: %w", name, err)
 	}
@@ -743,6 +756,7 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		fcrdnsVerifier:             fcrdns,
 		detectBrowserImpersonation: config.DetectBrowserImpersonation,
 		blockScriptClients:         config.BlockScriptClients,
+		blockCloudHosts:            config.BlockCloudHosts,
 		ipFilter:                   ipFilter,
 		checkQuery:        config.CheckQuery,
 		checkHeaders:      cleanedHeaders,
@@ -1000,6 +1014,21 @@ func (rw *RouteWarden) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if re := rw.findMatchingAllow(p); re != nil {
 			rw.logDebug("path %q allowed by pattern %q", p, re.String())
 			rw.forwardRequest(w, req)
+			return
+		}
+	}
+
+	// Datacenter & Cloud Hosting IP Classifier
+	if !uaAllowed && rw.blockCloudHosts && rw.ipFilter != nil && rw.ipFilter.asn != nil {
+		if isCloud, cloudASN, provider := rw.ipFilter.asn.IsCloudHost(clientIP); isCloud {
+			reason := "cloud_host_blocked"
+			if reBrowserLike.MatchString(ua) {
+				reason = "datacenter_browser_impersonation"
+			}
+			matchedPattern := fmt.Sprintf("AS%d (%s)", cloudASN, provider)
+			rw.logDebug("client %s origin ASN %d (%s) blocked by cloud host classifier (reason: %s)", clientIP, cloudASN, provider, reason)
+			rw.logSecurityEvent(req, clientIP, matchedPattern, reason)
+			rw.responseHandler.ServeBlockedRequest(w, req)
 			return
 		}
 	}

@@ -112,6 +112,7 @@ type Config struct {
 	VerifySearchEngineBots     bool     `json:"verifySearchEngineBots,omitempty"`
 	DetectBrowserImpersonation bool     `json:"detectBrowserImpersonation,omitempty"`
 	BlockScriptClients         bool     `json:"blockScriptClients,omitempty"`
+	BlockCloudHosts            bool     `json:"blockCloudHosts,omitempty"` // Block traffic originating from datacenter/cloud hosting ASNs
 	AllowedIPs                 []string `json:"allowedIps,omitempty"` // Whitelist of IPs or CIDR subnets exempt from blocking
 	// TrustedProxies lists IPs/CIDRs of upstream proxies (e.g. Traefik, load-balancers) whose
 	// X-Forwarded-For and X-Real-IP headers are trusted when resolving the real client IP.

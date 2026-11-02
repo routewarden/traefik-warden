@@ -10,6 +10,7 @@ import (
 var (
 	reBrowserLike = regexp.MustCompile(`(?i)(Mozilla/\d+\.\d+|AppleWebKit/\d+|Gecko/\d+|Chrome/\d+|Safari/\d+|Firefox/\d+|Edg/\d+)`)
 	reChromeVer   = regexp.MustCompile(`(?:Chrome|Chromium|Edg)/(\d+)`)
+	reGreaseBrand = regexp.MustCompile(`(?i)(?:Not[ _?=/().;:A-Za-z0-9-]*Brand|Not[^\w\s]?A[^\w\s]?Brand)`)
 
 	reScriptClientUA = regexp.MustCompile(`(?i)(` +
 		`python-requests|requests/|aiohttp|httpx|scrapy|urllib/|urllib3|tornado|curl-cffi|mechanize|` +
@@ -25,7 +26,7 @@ var (
 
 // DetectBrowserImpersonation inspects whether a request claiming to be an interactive
 // desktop or mobile browser lacks required companion headers or presents contradictory Client Hints.
-func DetectBrowserImpersonation(ua string, headers http.Header) (bool, string) {
+func DetectBrowserImpersonation(ua string, headers http.Header, headerOrder ...[]string) (bool, string) {
 	uaTrim := strings.TrimSpace(ua)
 	if uaTrim == "" {
 		return false, ""
@@ -44,6 +45,13 @@ func DetectBrowserImpersonation(ua string, headers http.Header) (bool, string) {
 	// Exclude recognized AI bots governed by AI bot registry profiles
 	if isAIBot, _ := MatchAIBot(uaTrim, AIBotProfileAll); isAIBot {
 		return false, ""
+	}
+
+	// 0. Header ordering checks (if explicit order slice provided)
+	if len(headerOrder) > 0 && len(headerOrder[0]) > 0 {
+		if isAnomaly, reason := DetectBrowserHeaderOrder(headerOrder[0], uaTrim); isAnomaly {
+			return true, reason
+		}
 	}
 
 	// 1. Mandatory companion headers expected from any real interactive browser
@@ -138,6 +146,61 @@ func DetectBrowserImpersonation(ua string, headers http.Header) (bool, string) {
 					return true, "sec_fetch_mode_mismatch"
 				}
 			}
+			if ver >= 89 && secCHUA != "" {
+				lowerCH := strings.ToLower(secCHUA)
+				if strings.Contains(lowerCH, "google chrome") || strings.Contains(lowerCH, "chromium") {
+					if !reGreaseBrand.MatchString(secCHUA) {
+						return true, "missing_grease_brand"
+					}
+				}
+			}
+		}
+	}
+
+	return false, ""
+}
+
+// DetectBrowserHeaderOrder checks if an explicit list of request header keys
+// shows ordering anomalies characteristic of script libraries forging a Chromium User-Agent.
+func DetectBrowserHeaderOrder(headerOrder []string, ua string) (bool, string) {
+	if len(headerOrder) == 0 || ua == "" {
+		return false, ""
+	}
+	uaTrim := strings.TrimSpace(ua)
+	if !reBrowserLike.MatchString(uaTrim) {
+		return false, ""
+	}
+	match := reChromeVer.FindStringSubmatch(uaTrim)
+	if len(match) <= 1 {
+		return false, ""
+	}
+	ver, err := strconv.Atoi(match[1])
+	if err != nil || ver < 89 {
+		return false, ""
+	}
+
+	secChUaIdx := -1
+	uaIdx := -1
+	acceptIdx := -1
+
+	for i, h := range headerOrder {
+		lower := strings.ToLower(strings.TrimSpace(h))
+		if lower == "sec-ch-ua" && secChUaIdx == -1 {
+			secChUaIdx = i
+		} else if lower == "user-agent" && uaIdx == -1 {
+			uaIdx = i
+		} else if lower == "accept" && acceptIdx == -1 {
+			acceptIdx = i
+		}
+	}
+
+	// Real Chromium always serializes Sec-CH-UA before User-Agent and before Accept.
+	if secChUaIdx != -1 {
+		if uaIdx != -1 && uaIdx < secChUaIdx {
+			return true, "header_order_anomaly"
+		}
+		if acceptIdx != -1 && acceptIdx < secChUaIdx {
+			return true, "header_order_anomaly"
 		}
 	}
 

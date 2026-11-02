@@ -3387,7 +3387,7 @@ func TestRouteWarden_BrowserImpersonationAndScriptClients(t *testing.T) {
 	reqLegit.Header.Set("User-Agent", chromeUA)
 	reqLegit.Header.Set("Accept-Language", "en-US,en;q=0.9")
 	reqLegit.Header.Set("Accept-Encoding", "gzip, deflate, br")
-	reqLegit.Header.Set("Sec-CH-UA", `"Chromium";v="128", "Google Chrome";v="128"`)
+	reqLegit.Header.Set("Sec-CH-UA", `"Chromium";v="128", "Not?A_Brand";v="24", "Google Chrome";v="128"`)
 	reqLegit.Header.Set("Sec-CH-UA-Mobile", "?0")
 	reqLegit.Header.Set("Sec-CH-UA-Platform", `"Windows"`)
 	reqLegit.Header.Set("Sec-Fetch-Site", "none")

@@ -13,7 +13,7 @@ func TestDetectBrowserImpersonation(t *testing.T) {
 	validHeaders.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
 	validHeaders.Set("Accept-Language", "en-US,en;q=0.9")
 	validHeaders.Set("Accept-Encoding", "gzip, deflate, br")
-	validHeaders.Set("Sec-CH-UA", `"Chromium";v="128", "Google Chrome";v="128"`)
+	validHeaders.Set("Sec-CH-UA", `"Chromium";v="128", "Not?A_Brand";v="24", "Google Chrome";v="128"`)
 	validHeaders.Set("Sec-CH-UA-Mobile", "?0")
 	validHeaders.Set("Sec-CH-UA-Platform", `"Windows"`)
 	validHeaders.Set("Sec-Fetch-Site", "none")
@@ -87,6 +87,39 @@ func TestDetectBrowserImpersonation(t *testing.T) {
 	isSpoofed, _ = DetectBrowserImpersonation(apiUA, http.Header{})
 	if isSpoofed {
 		t.Errorf("expected custom API app to not be treated as browser-like")
+	}
+
+	// 11. Missing GREASE brand in modern Chromium Sec-CH-UA
+	noGreaseHeaders := validHeaders.Clone()
+	noGreaseHeaders.Set("Sec-CH-UA", `"Chromium";v="128", "Google Chrome";v="128"`)
+	isSpoofed, reason = DetectBrowserImpersonation(chromeUA, noGreaseHeaders)
+	if !isSpoofed || reason != "missing_grease_brand" {
+		t.Errorf("expected missing_grease_brand, got isSpoofed=%v, reason=%s", isSpoofed, reason)
+	}
+}
+
+func TestDetectBrowserHeaderOrder(t *testing.T) {
+	chromeUA := "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+
+	// Canonical Chromium order: Sec-CH-UA comes before User-Agent and Accept
+	goodOrder := []string{"Host", "Connection", "Sec-CH-UA", "Sec-CH-UA-Mobile", "Sec-CH-UA-Platform", "User-Agent", "Accept"}
+	anomaly, reason := DetectBrowserHeaderOrder(goodOrder, chromeUA)
+	if anomaly {
+		t.Fatalf("expected valid header order to pass, got reason=%s", reason)
+	}
+
+	// Python/curl-style anomaly: User-Agent precedes Sec-CH-UA
+	badOrderUA := []string{"Host", "User-Agent", "Sec-CH-UA", "Accept"}
+	anomaly, reason = DetectBrowserHeaderOrder(badOrderUA, chromeUA)
+	if !anomaly || reason != "header_order_anomaly" {
+		t.Fatalf("expected header_order_anomaly for User-Agent before Sec-CH-UA, got anomaly=%v, reason=%s", anomaly, reason)
+	}
+
+	// Node/axios anomaly: Accept precedes Sec-CH-UA
+	badOrderAccept := []string{"Host", "Accept", "Sec-CH-UA", "User-Agent"}
+	anomaly, reason = DetectBrowserHeaderOrder(badOrderAccept, chromeUA)
+	if !anomaly || reason != "header_order_anomaly" {
+		t.Fatalf("expected header_order_anomaly for Accept before Sec-CH-UA, got anomaly=%v, reason=%s", anomaly, reason)
 	}
 }
 
